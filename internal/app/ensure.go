@@ -9,10 +9,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"retrog/internal/config"
 	"retrog/internal/storage"
+
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
 )
 
 // Ensurer handles downloading data back from S3 using the meta file.
@@ -62,17 +66,12 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 	}
 
 	for _, game := range cat.GameList {
-		baseName := ""
-		if len(game.Files) > 0 {
-			baseName = game.Files[0].Hash
-		}
-		if baseName == "" {
-			baseName = cleanGameName(game.Name)
-		}
-		if baseName == "" {
-			baseName = "unknown"
+		if len(game.Files) == 0 {
+			logutil.GetLogger(ctx).Info("skip game", zap.String("game", game.Name))
+			continue
 		}
 
+		baseName := deriveGameDirName(game)
 		gameDir := filepath.Join(catDir, baseName)
 		if opts.IncludeROM || opts.IncludeMedia {
 			if err := os.MkdirAll(gameDir, 0o755); err != nil {
@@ -81,7 +80,7 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 		}
 
 		if opts.IncludeROM {
-			if err := e.downloadROMFiles(ctx, game, baseName, gameDir, opts.Unzip); err != nil {
+			if err := e.downloadROMFiles(ctx, game, gameDir, opts.Unzip); err != nil {
 				return err
 			}
 		}
@@ -97,13 +96,10 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 	return nil
 }
 
-func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, base string, gameDir string, unzip bool) error {
-	if base == "" {
-		base = "unknown"
-	}
+func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, gameDir string, unzip bool) error {
 	for idx, file := range game.Files {
 		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
-		destName := buildFileName(base, file.Ext, idx)
+		destName := buildFileNameFromMeta(game, file, idx)
 		destPath := filepath.Join(gameDir, destName)
 		if err := e.store.DownloadToFile(ctx, e.cfg.S3.RomBucket, key, destPath); err != nil {
 			return err
@@ -128,15 +124,49 @@ func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, base string, 
 	return nil
 }
 
-func buildFileName(base, ext string, idx int) string {
+func deriveGameDirName(game Game) string {
+	name := game.Files[0].FileName
+	if name != "" {
+		trimmedExt := strings.TrimSuffix(name, filepath.Ext(name))
+		trimmedExt = removePartSuffix(trimmedExt)
+		if trimmedExt != "" {
+			return trimmedExt
+		}
+	}
+	cleaned := cleanGameName(game.Name)
+	if cleaned == "" {
+		cleaned = "unknown"
+	}
+	return cleaned
+}
+
+func buildFileNameFromMeta(game Game, file File, idx int) string {
+	base := file.FileName
 	if base == "" {
-		base = "unknown"
+		base = deriveGameDirName(game)
 	}
-	name := base
+
 	if idx > 0 {
-		name = fmt.Sprintf("%s_part_%d", base, idx+1)
+		baseName := removePartSuffix(strings.TrimSuffix(base, filepath.Ext(base)))
+		if baseName == "" {
+			baseName = "unknown"
+		}
+		return fmt.Sprintf("%s_part_%d%s", baseName, idx+1, file.Ext)
 	}
-	return name + ext
+
+	if base == "" {
+		return deriveGameDirName(game) + file.Ext
+	}
+
+	return base
+}
+
+func removePartSuffix(name string) string {
+	if name == "" {
+		return name
+	}
+	partSuffix := regexp.MustCompile(`(?i)_part_\d+$`)
+	return partSuffix.ReplaceAllString(name, "")
 }
 
 func unzipSingleFile(zipPath string) error {
