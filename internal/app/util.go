@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/md5"
+	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -10,7 +11,13 @@ import (
 	"strings"
 )
 
-var sanitizeRegexp = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+var (
+	sanitizeRegexp          = regexp.MustCompile(`[^\p{L}\p{N}._-]+`)
+	whitespaceCollapseRegex = regexp.MustCompile(`\s+`)
+	repeatPunctRegex        = regexp.MustCompile(`([[:punct:]])([[:punct:]])+`)
+	nonNameCharRegex        = regexp.MustCompile(`[^\p{L}\p{N}-]+`)
+	hyphenCollapseRegex     = regexp.MustCompile(`-+`)
+)
 
 func fileMD5(path string) (string, error) {
 	f, err := os.Open(path)
@@ -20,6 +27,21 @@ func fileMD5(path string) (string, error) {
 	defer f.Close()
 
 	hasher := md5.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		return "", fmt.Errorf("hash file %s: %w", path, err)
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func fileSHA1(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open file for sha1 %s: %w", path, err)
+	}
+	defer f.Close()
+
+	hasher := sha1.New()
 	if _, err := io.Copy(hasher, f); err != nil {
 		return "", fmt.Errorf("hash file %s: %w", path, err)
 	}
@@ -53,6 +75,31 @@ func sanitizeName(name string) string {
 	}
 	name = sanitizeRegexp.ReplaceAllString(name, "_")
 	name = strings.Trim(name, "._-")
+	if name == "" {
+		return "unknown"
+	}
+	return name
+}
+
+func cleanDescription(desc string) string {
+	if desc == "" {
+		return desc
+	}
+	desc = repeatPunctRegex.ReplaceAllString(desc, `$1`)
+	lines := strings.Split(desc, "\n")
+	for i, line := range lines {
+		lines[i] = whitespaceCollapseRegex.ReplaceAllString(line, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func cleanGameName(name string) string {
+	name = whitespaceCollapseRegex.ReplaceAllString(name, " ")
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, " ", "-")
+	name = nonNameCharRegex.ReplaceAllString(name, "")
+	name = hyphenCollapseRegex.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-")
 	if name == "" {
 		return "unknown"
 	}

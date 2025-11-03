@@ -18,6 +18,7 @@ const metadataFileName = "metadata.pegasus.txt"
 
 var mediaCandidates = map[string]string{
 	"boxart":     "boxart",
+	"boxfront":   "boxfront",
 	"screenshot": "screenshot",
 	"video":      "video",
 	"logo":       "logo",
@@ -90,14 +91,19 @@ func (u *Uploader) processCategory(ctx context.Context, categoryPath string) (*C
 }
 
 func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef metadata.Game) (*Game, error) {
+	cleanedName := cleanGameName(gameDef.Name)
+	cleanedDesc := cleanDescription(gameDef.Description)
+
 	game := &Game{
-		Name: gameDef.Name,
-		Desc: gameDef.Description,
+		DisplayName: cleanedName,
+		Desc:        cleanedDesc,
 	}
 
 	primaryMediaDir := u.findMediaDir(categoryPath, gameDef)
 
-	for _, rel := range gameDef.Files {
+	var baseHash string
+
+	for idx, rel := range gameDef.Files {
 		rel = strings.TrimSpace(rel)
 		if rel == "" {
 			continue
@@ -114,15 +120,28 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 		if err != nil {
 			return nil, err
 		}
-		key := fmt.Sprintf("%s%s", md5sum, strings.ToLower(filepath.Ext(full)))
-		contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(full)))
+		ext := strings.ToLower(filepath.Ext(full))
+		key := fmt.Sprintf("%s%s", md5sum, ext)
+		if baseHash == "" {
+			baseHash = md5sum
+			game.Hash = baseHash
+		}
+		partName := baseHash
+		if idx > 0 {
+			partName = fmt.Sprintf("%s_part_%d", baseHash, idx+1)
+		}
+		fileName := partName + ext
+		contentType := mime.TypeByExtension(ext)
 		if err := u.store.UploadFile(ctx, u.cfg.S3.RomBucket, key, full, contentType); err != nil {
 			return nil, err
 		}
 
 		game.Files = append(game.Files, File{
-			Path: s3Path(u.cfg.S3.RomBucket, key),
-			Hash: md5sum,
+			Hash:        md5sum,
+			Ext:         ext,
+			Size:        info.Size(),
+			DisplayName: cleanedName,
+			FileName:    fileName,
 		})
 	}
 
@@ -132,6 +151,9 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 	}
 
 	game.Media = media
+	if game.Hash == "" {
+		game.Hash = cleanedName
+	}
 	return game, nil
 }
 
@@ -162,7 +184,7 @@ func (u *Uploader) uploadMedia(ctx context.Context, dir string) (Media, error) {
 			return res, err
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		key := fmt.Sprintf("%s-%s%s", mediaType, md5sum, ext)
+		key := fmt.Sprintf("%s%s", md5sum, ext)
 		contentType := mime.TypeByExtension(ext)
 		if err := u.store.UploadFile(ctx, u.cfg.S3.MediaBucket, key, path, contentType); err != nil {
 			return res, err
@@ -194,6 +216,8 @@ func firstFileWithPrefix(dir, prefix string) (string, error) {
 
 func setMediaPath(media *Media, mediaType string, path string) {
 	switch mediaType {
+	case "boxfront":
+		media.BoxFront = path
 	case "boxart":
 		media.Boxart = path
 	case "screenshot":

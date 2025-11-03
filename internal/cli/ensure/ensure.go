@@ -3,6 +3,8 @@ package ensure
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -17,6 +19,8 @@ func NewCommand() *cobra.Command {
 	var metaPath string
 	var category string
 	var targetDir string
+	var dataSelection string
+	var unzip bool
 
 	cmd := &cobra.Command{
 		Use:   "ensure",
@@ -24,6 +28,11 @@ func NewCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if metaPath == "" || category == "" || targetDir == "" {
 				return errors.New("ensure requires --meta, --cat, and --dir")
+			}
+
+			includeROM, includeMedia, err := parseDataSelection(dataSelection)
+			if err != nil {
+				return err
 			}
 
 			cfgPath, _ := cmd.Root().PersistentFlags().GetString(common.ConfigFlag)
@@ -43,7 +52,15 @@ func NewCommand() *cobra.Command {
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
 
-			if err := ensurer.Ensure(ctx, metaPath, category, targetDir); err != nil {
+			opts := app.EnsureOptions{
+				Category:     category,
+				TargetDir:    targetDir,
+				IncludeROM:   includeROM,
+				IncludeMedia: includeMedia,
+				Unzip:        unzip,
+			}
+
+			if err := ensurer.Ensure(ctx, metaPath, opts); err != nil {
 				return err
 			}
 
@@ -54,6 +71,8 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&metaPath, "meta", "", "Path to meta JSON produced by upload")
 	cmd.Flags().StringVar(&category, "cat", "", "Category name to download")
 	cmd.Flags().StringVar(&targetDir, "dir", "", "Destination directory to download into (must be empty or missing)")
+	cmd.Flags().StringVar(&dataSelection, "data", "", "Comma-separated data types to download (rom, media)")
+	cmd.Flags().BoolVar(&unzip, "unzip", false, "Unzip ROM archives that contain a single file")
 
 	return cmd
 }
@@ -63,4 +82,34 @@ func cmdContext(cmd *cobra.Command) context.Context {
 		return ctx
 	}
 	return context.Background()
+}
+
+func parseDataSelection(input string) (rom bool, media bool, err error) {
+	if strings.TrimSpace(input) == "" {
+		return true, true, nil
+	}
+
+	rom = false
+	media = false
+
+	parts := strings.Split(input, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(strings.ToLower(part))
+		switch trimmed {
+		case "rom":
+			rom = true
+		case "media":
+			media = true
+		case "":
+			// ignore empty segments
+		default:
+			return false, false, fmt.Errorf("unknown data type %s", part)
+		}
+	}
+
+	if !rom && !media {
+		return true, true, nil
+	}
+
+	return rom, media, nil
 }

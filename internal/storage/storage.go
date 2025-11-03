@@ -6,4 +6,5 @@ import "context"
 type Client interface {
 	UploadFile(ctx context.Context, bucket, key, filePath string, contentType string) error
 	DownloadToFile(ctx context.Context, bucket, key, destPath string) error
+	ClearBucket(ctx context.Context, bucket string) error
 }

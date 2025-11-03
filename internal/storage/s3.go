@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	appconfig "retrog/internal/config"
 )
@@ -106,6 +107,49 @@ func (c *s3Client) DownloadToFile(ctx context.Context, bucket, key, destPath str
 
 	if _, err := io.Copy(out, res.Body); err != nil {
 		return fmt.Errorf("write dest %s: %w", destPath, err)
+	}
+
+	return nil
+}
+
+func (c *s3Client) ClearBucket(ctx context.Context, bucket string) error {
+	var continuation *string
+
+	for {
+		resp, err := c.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(bucket),
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return fmt.Errorf("list objects in %s: %w", bucket, err)
+		}
+
+		if len(resp.Contents) > 0 {
+			objs := make([]types.ObjectIdentifier, 0, len(resp.Contents))
+			for _, obj := range resp.Contents {
+				if obj.Key == nil {
+					continue
+				}
+				objs = append(objs, types.ObjectIdentifier{Key: obj.Key})
+			}
+			if len(objs) > 0 {
+				_, err = c.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
+					Bucket: aws.String(bucket),
+					Delete: &types.Delete{
+						Objects: objs,
+						Quiet:   aws.Bool(true),
+					},
+				})
+				if err != nil {
+					return fmt.Errorf("delete objects from %s: %w", bucket, err)
+				}
+			}
+		}
+
+		if resp.IsTruncated == nil || !*resp.IsTruncated {
+			break
+		}
+		continuation = resp.NextContinuationToken
 	}
 
 	return nil

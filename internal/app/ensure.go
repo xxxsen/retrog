@@ -1,12 +1,15 @@
 package app
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"retrog/internal/config"
 	"retrog/internal/storage"
@@ -15,17 +18,32 @@ import (
 // Ensurer handles downloading data back from S3 using the meta file.
 type Ensurer struct {
 	store storage.Client
+	cfg   *config.Config
+}
+
+// EnsureOptions control what the Ensurer downloads.
+type EnsureOptions struct {
+	Category     string
+	TargetDir    string
+	IncludeROM   bool
+	IncludeMedia bool
+	Unzip        bool
 }
 
 // NewEnsurer creates a new ensure handler.
-func NewEnsurer(store storage.Client, _ *config.Config) *Ensurer {
-	return &Ensurer{store: store}
+func NewEnsurer(store storage.Client, cfg *config.Config) *Ensurer {
+	return &Ensurer{store: store, cfg: cfg}
 }
 
 // Ensure downloads all games for the given category into targetDir.
-func (e *Ensurer) Ensure(ctx context.Context, metaPath, categoryName, targetDir string) error {
-	if err := ensureCleanDir(targetDir); err != nil {
+func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOptions) error {
+	if err := ensureCleanDir(opts.TargetDir); err != nil {
 		return err
+	}
+
+	if !opts.IncludeROM && !opts.IncludeMedia {
+		opts.IncludeROM = true
+		opts.IncludeMedia = true
 	}
 
 	meta, err := loadMeta(metaPath)
@@ -33,44 +51,140 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath, categoryName, targetDir 
 		return err
 	}
 
-	cat, err := findCategory(meta, categoryName)
+	cat, err := findCategory(meta, opts.Category)
 	if err != nil {
 		return err
 	}
 
+	catDir := filepath.Join(opts.TargetDir, sanitizeName(cat.CatName))
+	if err := os.MkdirAll(catDir, 0o755); err != nil {
+		return fmt.Errorf("create category dir %s: %w", catDir, err)
+	}
+
 	for _, game := range cat.GameList {
-		gameDir := filepath.Join(targetDir, sanitizeName(game.Name))
-		if err := os.MkdirAll(gameDir, 0o755); err != nil {
-			return fmt.Errorf("create game dir %s: %w", gameDir, err)
+		gameBase := game.Hash
+		if gameBase == "" {
+			gameBase = cleanGameName(game.DisplayName)
+		}
+		gameDir := filepath.Join(catDir, gameBase)
+		if opts.IncludeROM || opts.IncludeMedia {
+			if err := os.MkdirAll(gameDir, 0o755); err != nil {
+				return fmt.Errorf("create game dir %s: %w", gameDir, err)
+			}
 		}
 
-		for _, file := range game.Files {
-			if file.Path == "" {
-				continue
+		if opts.IncludeROM {
+			if err := e.downloadROMFiles(ctx, game, gameDir, opts.Unzip); err != nil {
+				return err
 			}
-			bucket, key, err := parseS3Path(file.Path)
+		}
+
+		if opts.IncludeMedia {
+			mediaDir := filepath.Join(gameDir, "media")
+			if err := e.downloadMedia(ctx, mediaDir, game.Media); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, gameDir string, unzip bool) error {
+	for idx, file := range game.Files {
+		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
+		destName := file.FileName
+		if destName == "" {
+			base := game.Hash
+			if base == "" {
+				base = file.Hash
+			}
+			destName = buildFileName(base, file.Ext, idx)
+		}
+		destPath := filepath.Join(gameDir, destName)
+		if err := e.store.DownloadToFile(ctx, e.cfg.S3.RomBucket, key, destPath); err != nil {
+			return err
+		}
+
+		if file.Hash != "" {
+			sum, err := fileMD5(destPath)
 			if err != nil {
 				return err
 			}
-			dest := filepath.Join(gameDir, filepath.Base(key))
-			if err := e.store.DownloadToFile(ctx, bucket, key, dest); err != nil {
-				return err
-			}
-			if file.Hash != "" {
-				sum, err := fileMD5(dest)
-				if err != nil {
-					return err
-				}
-				if sum != file.Hash {
-					return fmt.Errorf("hash mismatch for %s (expected %s got %s)", dest, file.Hash, sum)
-				}
+			if sum != file.Hash {
+				return fmt.Errorf("hash mismatch for %s (expected %s got %s)", destPath, file.Hash, sum)
 			}
 		}
 
-		mediaDir := filepath.Join(gameDir, "media")
-		if err := e.downloadMedia(ctx, mediaDir, game.Media); err != nil {
-			return err
+		if unzip && strings.EqualFold(file.Ext, ".zip") {
+			if err := unzipSingleFile(destPath); err != nil {
+				return err
+			}
 		}
+	}
+	return nil
+}
+
+func buildFileName(base, ext string, idx int) string {
+	if base == "" {
+		base = "unknown"
+	}
+	name := base
+	if idx > 0 {
+		name = fmt.Sprintf("%s_part_%d", base, idx+1)
+	}
+	return name + ext
+}
+
+func unzipSingleFile(zipPath string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("open zip %s: %w", zipPath, err)
+	}
+	defer r.Close()
+
+	var target *zip.File
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		target = f
+		break
+	}
+	if target == nil {
+		return fmt.Errorf("zip %s contains no files", zipPath)
+	}
+
+	rc, err := target.Open()
+	if err != nil {
+		return fmt.Errorf("open zip entry %s: %w", target.Name, err)
+	}
+	defer rc.Close()
+
+	extractedExt := strings.ToLower(filepath.Ext(target.Name))
+	if extractedExt == "" {
+		extractedExt = ".bin"
+	}
+
+	basePath := strings.TrimSuffix(zipPath, filepath.Ext(zipPath))
+	destPath := basePath + extractedExt
+
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("ensure unzip dir %s: %w", destPath, err)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("create unzip target %s: %w", destPath, err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, rc); err != nil {
+		return fmt.Errorf("write unzip target %s: %w", destPath, err)
+	}
+
+	if err := os.Remove(zipPath); err != nil {
+		return fmt.Errorf("remove zip %s: %w", zipPath, err)
 	}
 
 	return nil
@@ -134,9 +248,9 @@ func loadMeta(path string) (*Meta, error) {
 }
 
 func findCategory(meta *Meta, name string) (*Category, error) {
-	for _, cat := range meta.Category {
-		if cat.CatName == name {
-			return &cat, nil
+	for i := range meta.Category {
+		if meta.Category[i].CatName == name {
+			return &meta.Category[i], nil
 		}
 	}
 	return nil, fmt.Errorf("category %s not found in meta", name)
