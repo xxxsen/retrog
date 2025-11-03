@@ -9,25 +9,18 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	appdb "retrog/internal/db"
 	"retrog/internal/metadata"
+	"retrog/internal/model"
 	"retrog/internal/storage"
 
 	"github.com/spf13/pflag"
-	"github.com/xxxsen/common/database"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
 
 const metadataFile = "metadata.pegasus.txt"
-
-const (
-	selectMetaSQL = `SELECT id FROM retro_game_meta_tab WHERE rom_hash = ?`
-	insertMetaSQL = `INSERT INTO retro_game_meta_tab (rom_hash, rom_name, rom_desc, rom_size, create_time, update_time, ext_info) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	updateMetaSQL = `UPDATE retro_game_meta_tab SET rom_name = ?, rom_desc = ?, rom_size = ?, update_time = ?, ext_info = ? WHERE rom_hash = ?`
-)
 
 var mediaCandidates = map[string]string{
 	"boxart":     "boxart",
@@ -101,7 +94,7 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 
 func (c *UploadCommand) PostRun(ctx context.Context) error { return nil }
 
-func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (Meta, error) {
+func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (map[string]model.Entry, error) {
 	logger := logutil.GetLogger(ctx)
 	logger.Info("scanning rom root", zap.String("root", c.romDir))
 
@@ -119,7 +112,7 @@ func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (Me
 		}
 	}
 
-	meta := make(Meta)
+	meta := make(map[string]model.Entry)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -145,51 +138,15 @@ func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (Me
 	return meta, nil
 }
 
-func (c *UploadCommand) persistMeta(ctx context.Context, meta Meta) (inserted int, updated int, err error) {
-	store := appdb.Default()
-	if store == nil {
-		return 0, 0, errors.New("database not initialised")
+func (c *UploadCommand) persistMeta(ctx context.Context, meta map[string]model.Entry) (int, int, error) {
+	dao, err := appdb.NewMetaDAO()
+	if err != nil {
+		return 0, 0, err
 	}
-
-	err = store.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
-		for hash, entry := range meta {
-			extJSON, err := entry.MarshalExtInfo()
-			if err != nil {
-				return err
-			}
-
-			rows, err := tx.QueryContext(ctx, selectMetaSQL, hash)
-			if err != nil {
-				return err
-			}
-			var existingID int64
-			if rows.Next() {
-				if err := rows.Scan(&existingID); err != nil {
-					rows.Close()
-					return err
-				}
-			}
-			rows.Close()
-
-			now := time.Now().Unix()
-			if existingID == 0 {
-				if _, err := tx.ExecContext(ctx, insertMetaSQL, hash, entry.Name, entry.Desc, entry.Size, now, now, extJSON); err != nil {
-					return err
-				}
-				inserted++
-			} else {
-				if _, err := tx.ExecContext(ctx, updateMetaSQL, entry.Name, entry.Desc, entry.Size, now, extJSON, hash); err != nil {
-					return err
-				}
-				updated++
-			}
-		}
-		return nil
-	})
-	return inserted, updated, err
+	return dao.Upsert(ctx, meta)
 }
 
-func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]MetaEntry, error) {
+func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {
 	metaPath := filepath.Join(categoryPath, metadataFile)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing metadata", zap.String("path", metaPath))
@@ -200,10 +157,10 @@ func (c *UploadCommand) processCategory(ctx context.Context, store storage.Clien
 	}
 	doc.Cat = filepath.Base(categoryPath)
 	if len(doc.Games) == 0 {
-		return map[string]MetaEntry{}, nil
+		return map[string]model.Entry{}, nil
 	}
 
-	result := make(map[string]MetaEntry)
+	result := make(map[string]model.Entry)
 	for _, gameDef := range doc.Games {
 		entries, err := c.processGame(ctx, store, categoryPath, gameDef)
 		if err != nil {
@@ -216,8 +173,8 @@ func (c *UploadCommand) processCategory(ctx context.Context, store storage.Clien
 	return result, nil
 }
 
-func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (map[string]MetaEntry, error) {
-	entries := make(map[string]MetaEntry)
+func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (map[string]model.Entry, error) {
+	entries := make(map[string]model.Entry)
 
 	cleanedName := cleanGameName(gameDef.Name)
 	cleanedDesc := cleanDescription(gameDef.Description)
@@ -245,7 +202,7 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 		if err != nil {
 			return nil, err
 		}
-		mediaCopy := make([]MediaEntry, 0, len(mediaMap))
+		mediaCopy := make([]model.MediaEntry, 0, len(mediaMap))
 		if len(mediaMap) > 0 {
 			keys := make([]string, 0, len(mediaMap))
 			for mediaType := range mediaMap {
@@ -258,7 +215,7 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 				mediaCopy = append(mediaCopy, asset)
 			}
 		}
-		entries[md5sum] = MetaEntry{
+		entries[md5sum] = model.Entry{
 			Name:  cleanedName,
 			Desc:  cleanedDesc,
 			Size:  info.Size(),
@@ -278,8 +235,8 @@ func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game)
 	return filepath.Join(categoryPath, "media", base)
 }
 
-func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]MediaEntry, error) {
-	result := make(map[string]MediaEntry)
+func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]model.MediaEntry, error) {
+	result := make(map[string]model.MediaEntry)
 	for mediaType, baseName := range mediaCandidates {
 		path, err := c.pickMediaSource(ctx, categoryPath, defaultDir, gameDef, mediaType, baseName)
 		if err != nil {
@@ -302,7 +259,7 @@ func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, 
 		if err := store.UploadFile(ctx, key, path, contentType); err != nil {
 			return nil, err
 		}
-		result[mediaType] = MediaEntry{
+		result[mediaType] = model.MediaEntry{
 			Hash: md5sum,
 			Ext:  ext,
 			Size: info.Size(),

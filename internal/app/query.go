@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	appdb "retrog/internal/db"
+	"retrog/internal/model"
 
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
@@ -58,49 +59,21 @@ func (c *QueryCommand) PreRun(ctx context.Context) error {
 }
 
 func (c *QueryCommand) Run(ctx context.Context) error {
-	result := make(Meta)
+	result := make(map[string]model.Entry)
 	logger := logutil.GetLogger(ctx)
 
-	store := appdb.Default()
-	if store == nil {
-		return errors.New("database not initialised")
+	dao, err := appdb.NewMetaDAO()
+	if err != nil {
+		return err
 	}
-
-	const selectSQL = `
-SELECT rom_name, rom_desc, rom_size, ext_info
-FROM retro_game_meta_tab
-WHERE rom_hash = ?`
-
-	for _, hash := range c.hashes {
-		rows, err := store.QueryContext(ctx, selectSQL, hash)
-		if err != nil {
-			return err
-		}
-		var (
-			name    string
-			desc    string
-			size    int64
-			extInfo string
-		)
-		found := false
-		if rows.Next() {
-			found = true
-			if err := rows.Scan(&name, &desc, &size, &extInfo); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		rows.Close()
-
-		if !found {
-			logger.Warn("hash not found in meta", zap.String("hash", hash))
-			continue
-		}
-
-		entry, err := MetaEntryFromRecord(name, desc, size, extInfo)
-		if err != nil {
-			return fmt.Errorf("decode meta ext info for %s: %w", hash, err)
-		}
+	entries, missing, err := dao.FetchByHashes(ctx, c.hashes)
+	if err != nil {
+		return err
+	}
+	for _, hash := range missing {
+		logger.Warn("hash not found in meta", zap.String("hash", hash))
+	}
+	for hash, entry := range entries {
 		result[hash] = entry
 	}
 
