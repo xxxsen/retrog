@@ -21,6 +21,7 @@ import (
 
 type s3Client struct {
 	client *s3.Client
+	bucket string
 }
 
 // NewS3Client builds a storage client backed by AWS S3 (or compatible) based on config.
@@ -52,10 +53,10 @@ func NewS3Client(ctx context.Context, cfg appconfig.S3Config) (Client, error) {
 		o.UsePathStyle = cfg.ForcePathStyle
 	})
 
-	return &s3Client{client: client}, nil
+	return &s3Client{client: client, bucket: cfg.Bucket}, nil
 }
 
-func (c *s3Client) UploadFile(ctx context.Context, bucket, key, filePath string, contentType string) error {
+func (c *s3Client) UploadFile(ctx context.Context, key, filePath string, contentType string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open file for upload %s: %w", filePath, err)
@@ -72,26 +73,26 @@ func (c *s3Client) UploadFile(ctx context.Context, bucket, key, filePath string,
 	}
 
 	_, err = c.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket:        aws.String(bucket),
+		Bucket:        aws.String(c.bucket),
 		Key:           aws.String(key),
 		Body:          file,
 		ContentLength: aws.Int64(info.Size()),
 		ContentType:   aws.String(contentType),
 	})
 	if err != nil {
-		return fmt.Errorf("put object %s/%s: %w", bucket, key, err)
+		return fmt.Errorf("put object %s/%s: %w", c.bucket, key, err)
 	}
 
 	return nil
 }
 
-func (c *s3Client) DownloadToFile(ctx context.Context, bucket, key, destPath string) error {
+func (c *s3Client) DownloadToFile(ctx context.Context, key, destPath string) error {
 	res, err := c.client.GetObject(ctx, &s3.GetObjectInput{
-		Bucket: aws.String(bucket),
+		Bucket: aws.String(c.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return fmt.Errorf("get object %s/%s: %w", bucket, key, err)
+		return fmt.Errorf("get object %s/%s: %w", c.bucket, key, err)
 	}
 	defer res.Body.Close()
 
@@ -112,16 +113,16 @@ func (c *s3Client) DownloadToFile(ctx context.Context, bucket, key, destPath str
 	return nil
 }
 
-func (c *s3Client) ClearBucket(ctx context.Context, bucket string) error {
+func (c *s3Client) ClearBucket(ctx context.Context) error {
 	var continuation *string
 
 	for {
 		resp, err := c.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket:            aws.String(bucket),
+			Bucket:            aws.String(c.bucket),
 			ContinuationToken: continuation,
 		})
 		if err != nil {
-			return fmt.Errorf("list objects in %s: %w", bucket, err)
+			return fmt.Errorf("list objects in %s: %w", c.bucket, err)
 		}
 
 		if len(resp.Contents) > 0 {
@@ -134,14 +135,14 @@ func (c *s3Client) ClearBucket(ctx context.Context, bucket string) error {
 			}
 			if len(objs) > 0 {
 				_, err = c.client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-					Bucket: aws.String(bucket),
+					Bucket: aws.String(c.bucket),
 					Delete: &types.Delete{
 						Objects: objs,
 						Quiet:   aws.Bool(true),
 					},
 				})
 				if err != nil {
-					return fmt.Errorf("delete objects from %s: %w", bucket, err)
+					return fmt.Errorf("delete objects from %s: %w", c.bucket, err)
 				}
 			}
 		}

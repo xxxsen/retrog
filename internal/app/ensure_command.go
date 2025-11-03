@@ -36,12 +36,14 @@ type EnsureCommand struct {
 	dataSelection string
 	unzip         bool
 	opts          EnsureOptions
-	romBucket     string
-	mediaBucket   string
 }
 
 // Name returns the command identifier.
 func (c *EnsureCommand) Name() string { return "ensure" }
+
+func (c *EnsureCommand) Desc() string {
+	return "Download ROMs and media for a category based on generated meta JSON"
+}
 
 // NewEnsureCommand creates a new ensure command instance.
 func NewEnsureCommand() *EnsureCommand {
@@ -75,24 +77,6 @@ func (c *EnsureCommand) PreRun(ctx context.Context) error {
 		IncludeMedia: includeMedia,
 		Unzip:        c.unzip,
 	}
-
-	if _, err := storage.EnsureDefaultClient(ctx); err != nil {
-		return err
-	}
-
-	cfg, ok := storage.DefaultS3Config()
-	if !ok {
-		return errors.New("default s3 configuration not initialised")
-	}
-	bucket := cfg.RomBucket
-	if bucket == "" {
-		bucket = cfg.MediaBucket
-	}
-	if bucket == "" {
-		return errors.New("s3 bucket not configured")
-	}
-	c.romBucket = bucket
-	c.mediaBucket = bucket
 
 	logutil.GetLogger(ctx).Info("starting ensure",
 		zap.String("meta", c.metaPath),
@@ -181,7 +165,7 @@ func (c *EnsureCommand) downloadROMFiles(ctx context.Context, store storage.Clie
 		key := fmt.Sprintf("rom/%s%s", file.Hash, file.Ext)
 		destName := buildFileNameFromMeta(game, file, idx)
 		destPath := filepath.Join(gameDir, destName)
-		if err := store.DownloadToFile(ctx, c.romBucket, key, destPath); err != nil {
+		if err := store.DownloadToFile(ctx, key, destPath); err != nil {
 			return err
 		}
 
@@ -343,7 +327,7 @@ func (c *EnsureCommand) downloadMedia(ctx context.Context, store storage.Client,
 			continue
 		}
 		dest := filepath.Join(mediaDir, item.name+filepath.Ext(item.src))
-		if err := store.DownloadToFile(ctx, c.mediaBucket, item.src, dest); err != nil {
+		if err := store.DownloadToFile(ctx, item.src, dest); err != nil {
 			return err
 		}
 	}

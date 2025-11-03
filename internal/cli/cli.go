@@ -1,6 +1,14 @@
 package cli
 
-import "github.com/spf13/cobra"
+import (
+	"context"
+	"retrog/internal/app"
+	"retrog/internal/storage"
+
+	"github.com/spf13/cobra"
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "retrog",
@@ -9,17 +17,49 @@ var rootCmd = &cobra.Command{
 
 // Execute runs the CLI.
 func Execute() error {
-	return rootCmd.Execute()
+	if err := rootCmd.Execute(); err != nil {
+		logutil.GetLogger(context.Background()).Error("exec cmd failed", zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func init() {
-	rootCmd.PersistentFlags().String(ConfigFlag, "", "Path to configuration file")
-	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		_, err := ensureConfig(cmd)
-		return err
+	var cfg string
+	rootCmd.PersistentFlags().StringVar(&cfg, "config", "", "Path to configuration file")
+	for _, r := range app.RunnerList() {
+		rinst := app.MustResolveRunner(r)
+		subcmd := &cobra.Command{
+			Use:   rinst.Name(),
+			Short: rinst.Desc(),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				//配置加载及初始化
+				ctx := context.Background()
+				cc, err := LoadConfig(cfg)
+				if err != nil {
+					return err
+				}
+				client, err := storage.NewS3Client(ctx, cc.S3)
+				if err != nil {
+					return err
+				}
+				storage.SetDefaultClient(client)
+
+				//执行app流程
+				if err := rinst.PreRun(ctx); err != nil {
+					return err
+				}
+				if err := rinst.Run(ctx); err != nil {
+					return err
+				}
+				if err := rinst.PostRun(ctx); err != nil {
+					return err
+				}
+				return nil
+			},
+		}
+		rinst.Init(subcmd.Flags())
+		rootCmd.AddCommand(subcmd)
+
 	}
-	rootCmd.AddCommand(newUploadCommand())
-	rootCmd.AddCommand(newEnsureCommand())
-	rootCmd.AddCommand(newCleanBucketCommand())
-	rootCmd.AddCommand(newVerifyCommand())
 }

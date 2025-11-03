@@ -15,8 +15,7 @@ type Config struct {
 // S3Config holds the options for accessing the object store.
 type S3Config struct {
 	Host            string `json:"host"`
-	RomBucket       string `json:"rom_bucket"`
-	MediaBucket     string `json:"media_bucket"`
+	Bucket          string `json:"bucket"`
 	Region          string `json:"region"`
 	AccessKeyID     string `json:"access_key_id"`
 	SecretAccessKey string `json:"secret_access_key"`
@@ -74,11 +73,8 @@ func (c *Config) Validate() error {
 	if c.S3.Host == "" {
 		return errors.New("config.s3.host must be set")
 	}
-	if c.S3.RomBucket == "" {
-		return errors.New("config.s3.rom_bucket must be set")
-	}
-	if c.S3.MediaBucket == "" {
-		return errors.New("config.s3.media_bucket must be set")
+	if c.S3.Bucket == "" {
+		return errors.New("config.s3.bucket must be set")
 	}
 	return nil
 }

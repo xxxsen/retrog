@@ -42,6 +42,10 @@ type VerifyCommand struct {
 // Name returns the command identifier.
 func (c *VerifyCommand) Name() string { return "verify" }
 
+func (c *VerifyCommand) Desc() string {
+	return "Scan ROMs directory and report duplicate or colliding files"
+}
+
 // NewVerifyCommand constructs a verify command instance.
 func NewVerifyCommand() *VerifyCommand {
 	return &VerifyCommand{}

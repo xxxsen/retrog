@@ -1,6 +1,9 @@
 package app
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 var runnerRegistry = map[string]func() IRunner{}
 
@@ -16,4 +19,21 @@ func ResolveRunner(name string) (IRunner, error) {
 		return nil, fmt.Errorf("runner %s not registered", name)
 	}
 	return factory(), nil
+}
+
+func MustResolveRunner(name string) IRunner {
+	r, err := ResolveRunner(name)
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+func RunnerList() []string {
+	rs := make([]string, 0, len(runnerRegistry))
+	for k := range runnerRegistry {
+		rs = append(rs, k)
+	}
+	sort.Strings(rs)
+	return rs
 }

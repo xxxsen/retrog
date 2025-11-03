@@ -30,14 +30,16 @@ var mediaCandidates = map[string]string{
 
 // UploadCommand wraps the upload workflow and exposes a Run entrypoint.
 type UploadCommand struct {
-	romDir      string
-	metaPath    string
-	romBucket   string
-	mediaBucket string
+	romDir   string
+	metaPath string
 }
 
 // Name returns the command identifier.
 func (c *UploadCommand) Name() string { return "upload" }
+
+func (c *UploadCommand) Desc() string {
+	return "Upload ROMs and media to object storage and emit metadata"
+}
 
 // NewUploadCommand constructs an executable upload command.
 func NewUploadCommand() *UploadCommand {
@@ -55,23 +57,6 @@ func (c *UploadCommand) PreRun(ctx context.Context) error {
 	if c.romDir == "" || c.metaPath == "" {
 		return errors.New("upload requires --dir and --meta")
 	}
-	if _, err := storage.EnsureDefaultClient(ctx); err != nil {
-		return err
-	}
-	cfg, ok := storage.DefaultS3Config()
-	if !ok {
-		return errors.New("default s3 configuration not initialised")
-	}
-	bucket := cfg.RomBucket
-	if bucket == "" {
-		bucket = cfg.MediaBucket
-	}
-	if bucket == "" {
-		return errors.New("s3 bucket not configured")
-	}
-	c.romBucket = bucket
-	c.mediaBucket = bucket
-
 	logutil.GetLogger(ctx).Info("starting upload",
 		zap.String("dir", c.romDir),
 		zap.String("meta", c.metaPath),
@@ -210,7 +195,7 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 		key := fmt.Sprintf("rom/%s%s", md5sum, ext)
 		originalName := filepath.Base(rel)
 		contentType := mime.TypeByExtension(ext)
-		if err := store.UploadFile(ctx, c.romBucket, key, full, contentType); err != nil {
+		if err := store.UploadFile(ctx, key, full, contentType); err != nil {
 			return nil, err
 		}
 
@@ -260,7 +245,7 @@ func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, d
 		ext := strings.ToLower(filepath.Ext(path))
 		key := fmt.Sprintf("media/%s%s", md5sum, ext)
 		contentType := mime.TypeByExtension(ext)
-		if err := store.UploadFile(ctx, c.mediaBucket, key, path, contentType); err != nil {
+		if err := store.UploadFile(ctx, key, path, contentType); err != nil {
 			return res, err
 		}
 		assignMediaPath(&res, mediaType, key)
