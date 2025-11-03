@@ -32,6 +32,7 @@ var mediaCandidates = map[string]string{
 type UploadCommand struct {
 	romDir   string
 	metaPath string
+	cats     []string
 }
 
 // Name returns the command identifier.
@@ -50,6 +51,7 @@ func NewUploadCommand() *UploadCommand {
 func (c *UploadCommand) Init(fst *pflag.FlagSet) {
 	fst.StringVar(&c.romDir, "dir", "", "ROM root directory")
 	fst.StringVar(&c.metaPath, "meta", "", "Path to write generated meta JSON")
+	fst.StringSliceVar(&c.cats, "cat", nil, "Comma separated list of categories to upload; empty means all")
 }
 
 // PreRun performs validation and object initialisation as needed.
@@ -106,12 +108,27 @@ func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (*M
 
 	result := &Meta{}
 
+	allowed := make(map[string]struct{})
+	if len(c.cats) > 0 {
+		for _, name := range c.cats {
+			trimmed := strings.TrimSpace(name)
+			if trimmed != "" {
+				allowed[trimmed] = struct{}{}
+			}
+		}
+	}
+
 	for _, entry := range rootEntries {
 		if !entry.IsDir() {
 			continue
 		}
 		categoryPath := filepath.Join(c.romDir, entry.Name())
-		cat, err := c.processCategory(ctx, store, categoryPath)
+		if len(allowed) > 0 {
+			if _, ok := allowed[entry.Name()]; !ok {
+				continue
+			}
+		}
+		cat, err := c.processCategory(ctx, store, categoryPath, entry.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -128,7 +145,7 @@ func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (*M
 	return result, nil
 }
 
-func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (*Category, error) {
+func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string, catName string) (*Category, error) {
 	metaPath := filepath.Join(categoryPath, metadataFileName)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing category metadata", zap.String("meta", metaPath))
@@ -142,10 +159,7 @@ func (c *UploadCommand) processCategory(ctx context.Context, store storage.Clien
 		return nil, nil
 	}
 
-	cat := &Category{CatName: doc.Collection}
-	if cat.CatName == "" {
-		cat.CatName = filepath.Base(categoryPath)
-	}
+	cat := &Category{CatName: catName, Collection: doc.Collection}
 
 	for _, gameDef := range doc.Games {
 		game, err := c.processGame(ctx, store, categoryPath, gameDef)

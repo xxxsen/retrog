@@ -101,16 +101,13 @@ func (c *EnsureCommand) Run(ctx context.Context) error {
 }
 
 func (c *EnsureCommand) ensure(ctx context.Context, store storage.Client) error {
-	opts := c.opts
-
-	if err := ensureCleanDir(opts.TargetDir); err != nil {
+	if err := ensureCleanDir(c.targetDir); err != nil {
 		return err
 	}
 
-	if !opts.IncludeROM && !opts.IncludeMedia {
-		opts.IncludeROM = true
-		opts.IncludeMedia = true
-		c.opts = opts
+	if !c.opts.IncludeROM && !c.opts.IncludeMedia {
+		c.opts.IncludeROM = true
+		c.opts.IncludeMedia = true
 	}
 
 	meta, err := loadMeta(c.metaPath)
@@ -118,12 +115,12 @@ func (c *EnsureCommand) ensure(ctx context.Context, store storage.Client) error 
 		return err
 	}
 
-	cat, err := findCategory(meta, opts.Category)
+	cat, err := findCategory(meta, c.category)
 	if err != nil {
 		return err
 	}
 
-	catDir := filepath.Join(opts.TargetDir, sanitizeName(cat.CatName))
+	catDir := filepath.Join(c.targetDir, sanitizeName(cat.CatName))
 	if err := os.MkdirAll(catDir, 0o755); err != nil {
 		return fmt.Errorf("create category dir %s: %w", catDir, err)
 	}
@@ -136,19 +133,19 @@ func (c *EnsureCommand) ensure(ctx context.Context, store storage.Client) error 
 
 		baseName := deriveGameDirName(game)
 		gameDir := filepath.Join(catDir, baseName)
-		if opts.IncludeROM || opts.IncludeMedia {
+		if c.opts.IncludeROM || c.opts.IncludeMedia {
 			if err := os.MkdirAll(gameDir, 0o755); err != nil {
 				return fmt.Errorf("create game dir %s: %w", gameDir, err)
 			}
 		}
 
-		if opts.IncludeROM {
-			if err := c.downloadROMFiles(ctx, store, game, gameDir, opts.Unzip); err != nil {
+		if c.opts.IncludeROM {
+			if err := c.downloadROMFiles(ctx, store, game, gameDir, c.opts.Unzip); err != nil {
 				return err
 			}
 		}
 
-		if opts.IncludeMedia {
+		if c.opts.IncludeMedia {
 			mediaDir := filepath.Join(gameDir, "media")
 			if err := c.downloadMedia(ctx, store, mediaDir, game.Media); err != nil {
 				return err

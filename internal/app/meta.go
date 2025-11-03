@@ -7,8 +7,9 @@ type Meta struct {
 
 // Category groups games under the same collection.
 type Category struct {
-	CatName  string `json:"cat_name"`
-	GameList []Game `json:"game_list"`
+	CatName    string `json:"cat_name"`
+	Collection string `json:"collection,omitempty"`
+	GameList   []Game `json:"game_list"`
 }
 
 // Game describes a single ROM entry in the exported meta file.

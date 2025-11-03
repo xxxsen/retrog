@@ -17,6 +17,7 @@ type Game struct {
 // Document represents a metadata file and its games.
 type Document struct {
 	Collection string
+	Cat        string
 	Games      []Game
 }
 
