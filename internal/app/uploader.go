@@ -95,13 +95,11 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 	cleanedDesc := cleanDescription(gameDef.Description)
 
 	game := &Game{
-		DisplayName: cleanedName,
-		Desc:        cleanedDesc,
+		Name: cleanedName,
+		Desc: cleanedDesc,
 	}
 
 	primaryMediaDir := u.findMediaDir(categoryPath, gameDef)
-
-	var baseHash string
 
 	for _, rel := range gameDef.Files {
 		rel = strings.TrimSpace(rel)
@@ -122,10 +120,6 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 		}
 		ext := strings.ToLower(filepath.Ext(full))
 		key := fmt.Sprintf("%s%s", md5sum, ext)
-		if baseHash == "" {
-			baseHash = md5sum
-			game.Hash = baseHash
-		}
 		originalName := filepath.Base(rel)
 		contentType := mime.TypeByExtension(ext)
 		if err := u.store.UploadFile(ctx, u.cfg.S3.RomBucket, key, full, contentType); err != nil {
@@ -133,11 +127,10 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 		}
 
 		game.Files = append(game.Files, File{
-			Hash:        md5sum,
-			Ext:         ext,
-			Size:        info.Size(),
-			DisplayName: cleanedName,
-			FileName:    originalName,
+			Hash:     md5sum,
+			Ext:      ext,
+			Size:     info.Size(),
+			FileName: originalName,
 		})
 	}
 
@@ -147,9 +140,6 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 	}
 
 	game.Media = media
-	if game.Hash == "" {
-		game.Hash = cleanedName
-	}
 	return game, nil
 }
 

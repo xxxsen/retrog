@@ -13,20 +13,18 @@ type Category struct {
 
 // Game describes a single ROM entry in the exported meta file.
 type Game struct {
-	DisplayName string `json:"display_name"`
-	Hash        string `json:"hash"`
-	Files       []File `json:"files"`
-	Desc        string `json:"desc"`
-	Media       Media  `json:"media"`
+	Name  string `json:"name"`
+	Files []File `json:"files"`
+	Desc  string `json:"desc"`
+	Media Media  `json:"media"`
 }
 
 // File holds uploaded ROM information.
 type File struct {
-	Hash        string `json:"hash"`
-	Ext         string `json:"ext"`
-	Size        int64  `json:"size"`
-	DisplayName string `json:"display_name"`
-	FileName    string `json:"file_name"`
+	Hash     string `json:"hash"`
+	Ext      string `json:"ext"`
+	Size     int64  `json:"size"`
+	FileName string `json:"file_name"`
 }
 
 // Media contains optional media assets.

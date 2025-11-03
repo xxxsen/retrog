@@ -62,11 +62,18 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 	}
 
 	for _, game := range cat.GameList {
-		gameBase := game.Hash
-		if gameBase == "" {
-			gameBase = cleanGameName(game.DisplayName)
+		baseName := ""
+		if len(game.Files) > 0 {
+			baseName = game.Files[0].Hash
 		}
-		gameDir := filepath.Join(catDir, gameBase)
+		if baseName == "" {
+			baseName = cleanGameName(game.Name)
+		}
+		if baseName == "" {
+			baseName = "unknown"
+		}
+
+		gameDir := filepath.Join(catDir, baseName)
 		if opts.IncludeROM || opts.IncludeMedia {
 			if err := os.MkdirAll(gameDir, 0o755); err != nil {
 				return fmt.Errorf("create game dir %s: %w", gameDir, err)
@@ -74,7 +81,7 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 		}
 
 		if opts.IncludeROM {
-			if err := e.downloadROMFiles(ctx, game, gameDir, opts.Unzip); err != nil {
+			if err := e.downloadROMFiles(ctx, game, baseName, gameDir, opts.Unzip); err != nil {
 				return err
 			}
 		}
@@ -90,13 +97,12 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 	return nil
 }
 
-func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, gameDir string, unzip bool) error {
+func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, base string, gameDir string, unzip bool) error {
+	if base == "" {
+		base = "unknown"
+	}
 	for idx, file := range game.Files {
 		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
-		base := game.Hash
-		if base == "" {
-			base = file.Hash
-		}
 		destName := buildFileName(base, file.Ext, idx)
 		destPath := filepath.Join(gameDir, destName)
 		if err := e.store.DownloadToFile(ctx, e.cfg.S3.RomBucket, key, destPath); err != nil {
