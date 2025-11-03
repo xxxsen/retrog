@@ -1,39 +1,44 @@
 # retrog
 
-retrog 是一个 Go 编写的工具集，旨在帮助将 Pegasus ROM 资源迁移到兼容 S3 的对象存储，同时生成新的元数据、按需查询内容并清理测试环境。
+`retrog` 是一个面向 Pegasus 元数据的命令行工具集，用来：
 
-## 功能亮点
+- 解析本地 `metadata.pegasus.txt` 与 ROM/媒体文件；
+- 将媒体资产上传到兼容 S3 的对象存储；
+- 把整理后的 ROM 元信息写入本地 SQLite；
+- 根据 ROM 哈希输出结构化 JSON 数据；
+- 在调试阶段一键清空对象存储。
 
-- **上传**：扫描 ROM 根目录，只上传媒体资源（封面、截图、视频等）到 S3，文件名直接使用媒体文件的 MD5。
-- **生成元数据**：读取各目录下的 `metadata.pegasus.txt`，并将记录按 ROM 哈希写入 SQLite，便于后续查询与复用。
-- **元数据查询**：通过 `query` 命令按 ROM 哈希筛选元数据并输出 JSON，便于快速查看资源信息。
-- **清理环境**：提供清空测试桶的能力，方便重置环境。
-- **统一生命周期**：所有命令遵循统一的 `Init → PreRun → Run → PostRun` 流程，并通过注册中心自动挂载到 CLI。
+工程使用 Go 开发，模块名为 `github.com/xxxsen/retrog`，支持 `go install` 直接安装。
 
 ---
 
 ## 安装
 
 ```bash
-git clone <repo-url>
+go install github.com/xxxsen/retrog/cmd/retrog@latest
+```
+
+或克隆仓库后构建：
+
+```bash
+git clone https://github.com/xxxsen/retrog.git
 cd retrog
-go mod download
 go build ./cmd/retrog
 ```
 
-构建后的可执行文件为 `retrog`（Windows 上为 `retrog.exe`）。
+生成的可执行文件为 `retrog`（Windows 上为 `retrog.exe`）。
 
 ---
 
 ## 配置
 
-程序按照以下优先级读取配置（JSON）：
+CLI 会按以下优先级查找 JSON 配置文件：
 
-1. CLI 参数 `--config <path>`
-2. 当前目录 `./config.json`
+1. `--config <path>`
+2. `./config.json`
 3. `/etc/config.json`
 
-示例：
+配置格式：
 
 ```json
 {
@@ -46,156 +51,144 @@ go build ./cmd/retrog
     "session_token": "",
     "force_path_style": true
   },
-  "db": "./.vscode/meta.db"
+  "db": "./meta.db"
 }
 ```
 
-- `host`：S3/MinIO 访问地址，可使用 `https://` 或裸地址。
-- `bucket`：统一存储桶，所有媒体资源会以 `<md5><ext>` 的形式上传到根目录。
-- `force_path_style`：若对象存储需要 Path-Style 访问（例如 MinIO 默认配置），请设为 `true`。
-- 若省略凭证，SDK 会使用环境变量或默认链路自动获取。
-- `db`：SQLite 数据库文件路径，用于保存 ROM 元数据。
+- **s3**：用于上传/下载媒体资源的对象存储；所有对象以 `media/<md5><ext>` 命名。
+- **db**：SQLite 文件路径，存放解析后的 ROM 元数据。
+
+加载配置后，CLI 会初始化：
+
+1. S3 客户端（通过 `github.com/xxxsen/common/storage` 抽象层）；
+2. SQLite 连接（`github.com/xxxsen/common/database/sqlite`），并确保存在表 `retro_game_meta_tab`。
 
 ---
 
-## 元数据与目录要求
+## 输入目录结构
+
+`upload` 命令要求 ROM 根目录形如：
 
 ```
 roms/
-  gb/
+  GB/
     metadata.pegasus.txt
-    Super Mario Land.gb
+    超级马里奥1.gb
     media/
-      Super Mario Land/
+      超级马里奥1/
         boxfront.png
         video.mp4
 ```
 
-- `metadata.pegasus.txt` 需为 Pegasus 格式，至少包含 `game`、`file`、`description` 字段。
-- ROM 文件需与元数据在同一目录，并与 `file:` 条目匹配；工具不会上传 ROM，只会读取其哈希值。
-- 媒体资源建议放在 `media/<rom文件名（不含扩展名）>/` 子目录，并使用 `boxart`、`boxfront`、`screenshot`、`video`、`logo` 等前缀；若使用新的 `assets.*` 字段（例如 `assets.box_front: media/kof96ae20/boxfront.jpg`），则会直接按指定路径取文件。
+- 每个分类目录必须包含一份 Pegasus 元数据文件 `metadata.pegasus.txt`。
+- `game` 节点的 `file:` 字段列出 ROM 文件名；工具会在同目录下查找这些文件并计算 MD5。
+- 媒体文件优先读取 `assets.*` 描述（如 `assets.box_front: media/kof96ae20/boxfront.jpg`），否则回退到 `media/<rom文件名>/` 下按前缀匹配。
 
-`retrog query` 命令会输出一个以 ROM MD5 为键的 JSON（底层数据存放在 SQLite 的 `retro_game_meta_tab` 表中）：
+---
+
+## 生成的数据
+
+SQLite 表 `retro_game_meta_tab` 结构：
+
+| 字段         | 类型        | 说明                              |
+|--------------|-------------|-----------------------------------|
+| id           | INTEGER PK  | 自增主键                          |
+| rom_hash     | VARCHAR(32) | ROM 文件 MD5，唯一约束            |
+| rom_name     | VARCHAR(128)| 清洗后的展示名称（`cleanGameName`）|
+| rom_desc     | VARCHAR(1024)| 规整后的描述（`cleanDescription`）|
+| rom_size     | INTEGER     | ROM 文件字节数                    |
+| create_time  | BIGINT      | 首次写入时间（Unix 秒）           |
+| update_time  | BIGINT      | 最近更新                           |
+| ext_info     | VARCHAR(2048)| JSON：`{"media":[{type,hash,ext,size},...]}` |
+
+媒体文件上传后命名为 `<md5><ext>` 并存放在对象存储的 `media/` 前缀下；元数据不会记录桶信息，只保留文件名、类型与大小。
+
+---
+
+## 命令总览
+
+所有命令共享 `--config` 全局参数，并在执行前自动完成 S3/SQLite 初始化与统一的 `Init → PreRun → Run → PostRun` 生命周期。
+
+### 1. `upload`
+
+```
+retrog upload \
+  --dir <rom_root> \
+  [--cat cat1,cat2]
+```
+
+行为：
+
+1. 扫描 `--dir` 下的子目录；若指定 `--cat`，仅处理同名目录。
+2. 解析每个目录的 `metadata.pegasus.txt`：
+   - `cleanGameName` 将名称规范化（保留字母数字，空格转为 `-`）；
+   - `cleanDescription` 统一全半角、压缩多余空白及连续标点；
+   - `file:` 列表中的每个 ROM 文件都会单独生成记录，使用文件内容的 MD5 作为 `rom_hash`。
+3. 为媒体类型 `boxart` / `boxfront` / `screenshot` / `video` / `logo` 搜索文件：
+   - 先查看 `assets.*` 显式路径（支持相对/绝对路径）；
+   - 否则在 `media/<ROM文件名（无扩展）>/` 下按前缀匹配；
+   - 找到后计算 MD5，上传至 `media/<md5><ext>`，记录文件大小。
+4. 以 50 条/批的方式写入 SQLite：先尝试 `INSERT`，若命中唯一键，再执行 `UPDATE`。
+
+命令输出会记录处理目录及最终写入的条目数量。
+
+### 2. `query`
+
+```
+retrog query \
+  --hash <h1,h2,...> \
+  [--meta ./override.db]
+```
+
+- `--hash` 为必填，支持逗号分隔多个哈希。
+- `--meta` 可覆盖配置中的 SQLite 路径。
+- 从 SQLite 读取匹配记录并输出 JSON，格式为 `{"hash":{"name":...}}`。
+- 若某哈希不存在，会通过日志警告，但不会终止执行。
+
+示例输出：
 
 ```json
 {
-  "b59d...": {
-    "name": "Super-Mario-Land",
-    "desc": "......",
-    "size": 262144,
+  "37315071264cbc216e4ba379875ba1e1": {
+    "name": "Super-Mario-Doctor",
+    "desc": "……",
+    "size": 82086,
     "media": [
-      {
-        "type": "boxart",
-        "hash": "37315071264cbc216e4ba379875ba1e1",
-        "ext": ".png",
-        "size": 2048
-      },
-      {
-        "type": "video",
-        "hash": "a381...",
-        "ext": ".mp4",
-        "size": 8192
-      }
+      {"type": "logo", "hash": "7d049746b9f2076bff34227061a01603", "ext": ".png", "size": 34384},
+      {"type": "video", "hash": "37315071264cbc216e4ba379875ba1e1", "ext": ".mp4", "size": 1309403}
     ]
   }
 }
 ```
 
-- JSON 值包含清洗后的 `name`、`desc`、ROM 大小以及媒体列表。
-- 媒体文件记录了类型、哈希、扩展名和体积，可直接推导 S3 对象键 `<hash><ext>`；同样的数据也存储在 `ext_info` 字段中。
+### 3. `clean-bucket`
+
+```
+retrog clean-bucket --force
+```
+
+- 调用存储客户端的 `ClearBucket` 方法删除桶内全部对象，主要用于测试环境重置。
+- 必须显式传入 `--force`，否则命令会直接返回错误。
 
 ---
 
-## CLI 命令
+## 日志与错误处理
 
-所有命令均在注册表中登记，CLI 启动时自动挂载，输出也会通过 `github.com/xxxsen/common/logutil` 进行结构化日志记录。
-
-### `upload`
-
-```
-retrog upload \
-  --dir <rom根目录> \
-  [--cat gb,fc] \
-  [--config <配置文件>]
-```
-
-- 扫描 `--dir` 下的所有子目录；若指定 `--cat`（逗号分隔），则仅处理对应目录。
-- 解析 `metadata.pegasus.txt`，只会上传媒体文件到 S3，ROM 仍保留在本地。
-- 支持 `assets.*` 字段覆盖媒体路径；若未设置则回退到 `media/<rom名>/` 目录下匹配前缀文件。
-- 媒体文件上传后使用 `<媒体文件MD5><扩展名>` 作为对象键，并记录在 SQLite 中。
-- ROM 元数据会写入 SQLite（`retro_game_meta_tab`），包含清洗后的名称、描述、ROM 大小以及媒体条目（类型、哈希、扩展名、体积）。
-
-### `query`
-
-```
-retrog query \
-  [--meta ./meta.db] \
-  --hash <hash1,hash2>
-```
-
-- `--hash` 为必填，使用逗号分隔多个 ROM 哈希。
-- `--meta` 可选，用于覆盖配置中的 SQLite 数据库路径。
-- 输出结果为 JSON，键为匹配的 ROM 哈希，值为对应的元数据。
-- 若某个哈希在 meta 中不存在，会输出告警日志但不会中断命令。
-- 可配合 `jq` 等工具对输出结果进一步处理。
-
-### `clean-bucket`
-
-```
-retrog clean-bucket --force [--config <配置文件>]
-```
-
-- 清空配置中指定桶内的所有对象（主要用于移除已上传的媒体测试文件）。
-- 为防误操作，必须显式携带 `--force`。
+- 项目使用 `github.com/xxxsen/common/logutil` 封装的 zap 日志；默认输出到标准输出。
+- 解析失败、缺少文件、S3/SQLite 操作失败等均会返回错误；非致命情况（如缺少某种媒体）会以 `Warn` 级别提示。
+- 通过环境变量或配置的 `logger` 组件可调整日志等级。
 
 ---
 
-## 扩展命令
+## 开发提示
 
-实现 `IRunner` 接口即可新增命令：
-
-```go
-type MyCommand struct { ... }
-
-func (c *MyCommand) Name() string { return "something" }
-func (c *MyCommand) Desc() string { return "简单描述" }
-func (c *MyCommand) Init(f *pflag.FlagSet) { ... }
-func (c *MyCommand) PreRun(ctx context.Context) error { ... }
-func (c *MyCommand) Run(ctx context.Context) error { ... }
-func (c *MyCommand) PostRun(ctx context.Context) error { ... }
-```
-
-在包初始化时向注册表登记：
-
-```go
-func init() {
-    RegisterRunner("something", func() IRunner { return &MyCommand{} })
-}
-```
-
-CLI 会自动根据注册表生成子命令。
-
----
-
-## 开发与调试
-
-- 提交前请运行 `gofmt -w $(find . -name '*.go')`。
-- 建议使用 MinIO 搭建测试环境，`clean-bucket --force` 可快速清理环境。
-- 遇到解析失败或缺失文件时，命令会通过 zap 日志提示。
-- 可通过调整 `LOG_LEVEL` 查看更详细的调试信息。
-
----
-
-## 依赖
-
-- Go ≥ 1.24
-- `github.com/aws/aws-sdk-go-v2` 及其子模块（S3）
-- `github.com/spf13/cobra`
-- `github.com/xxxsen/common/logutil` 与 `go.uber.org/zap`
-- Pegasus 元数据文件 (`metadata.pegasus.txt`)
+- Go 版本要求 ≥ 1.24。
+- 常用依赖：`github.com/aws/aws-sdk-go-v2`、`github.com/didi/gendry/builder`、`github.com/xxxsen/common`。
+- 新增命令时实现 `app.IRunner` 并在包 `init()` 中注册；CLI 会自动生成对应子命令。
+- 运行 `go test ./...` 确认改动编译通过。
 
 ---
 
 ## License
 
-MIT © [Your Name / Organization]
+MIT © 2024-present
