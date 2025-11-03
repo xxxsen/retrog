@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"retrog/internal/app"
+	"retrog/internal/config"
 	appdb "retrog/internal/db"
 	"retrog/internal/storage"
 
@@ -28,8 +29,35 @@ func Execute() error {
 	return nil
 }
 
+type InitFunc func(ctx context.Context, cc *config.Config) error
+
+func initS3(ctx context.Context, cc *config.Config) error {
+	client, err := storage.NewS3Client(ctx, cc.S3)
+	if err != nil {
+		return err
+	}
+	storage.SetDefaultClient(client)
+	return nil
+}
+
+func initDB(ctx context.Context, cc *config.Config) error {
+	dbPath := cc.DB
+	sqliteDB, err := sqlite.New(dbPath, func(db database.IDatabase) error {
+		return appdb.EnsureSchema(ctx, db)
+	})
+	if err != nil {
+		return err
+	}
+	appdb.SetDefault(sqliteDB)
+	return nil
+}
+
 func init() {
 	var cfg string
+	initfns := []InitFunc{
+		initS3,
+		initDB,
+	}
 	rootCmd.PersistentFlags().StringVar(&cfg, "config", "", "Path to configuration file")
 	for _, r := range app.RunnerList() {
 		rinst := app.MustResolveRunner(r)
@@ -43,25 +71,11 @@ func init() {
 				if err != nil {
 					return err
 				}
-				client, err := storage.NewS3Client(ctx, cc.S3)
-				if err != nil {
-					return err
-				}
-				storage.SetDefaultClient(client)
-
-				dbPath := cc.DB
-				if override, ok := rinst.(app.DBPathOverride); ok {
-					if val := override.DBOverridePath(); val != "" {
-						dbPath = val
+				for _, fn := range initfns {
+					if err := fn(ctx, cc); err != nil {
+						return err
 					}
 				}
-				sqliteDB, err := sqlite.New(dbPath, func(db database.IDatabase) error {
-					return appdb.EnsureSchema(ctx, db)
-				})
-				if err != nil {
-					return err
-				}
-				appdb.SetDefault(sqliteDB)
 
 				//执行app流程
 				if err := rinst.PreRun(ctx); err != nil {

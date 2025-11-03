@@ -12,7 +12,7 @@ const (
 	createTableSQL = `
 CREATE TABLE IF NOT EXISTS retro_game_meta_tab (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	rom_hash VARCHAR(32) NOT NULL,
+	rom_hash VARCHAR(32) NOT NULL UNIQUE,
 	rom_name VARCHAR(128) NOT NULL,
 	rom_desc VARCHAR(1024) NOT NULL,
 	rom_size INTEGER NOT NULL,
@@ -20,10 +20,6 @@ CREATE TABLE IF NOT EXISTS retro_game_meta_tab (
 	update_time BIGINT NOT NULL,
 	ext_info VARCHAR(2048) NOT NULL
 );`
-
-	createIndexSQL = `
-CREATE UNIQUE INDEX IF NOT EXISTS idx_retro_game_meta_tab_hash
-ON retro_game_meta_tab(rom_hash);`
 )
 
 // SetDefault assigns the global database instance.
@@ -38,11 +34,6 @@ func Default() database.IDatabase {
 
 // EnsureSchema initialises required tables and indexes.
 func EnsureSchema(ctx context.Context, db database.IDatabase) error {
-	if _, err := db.ExecContext(ctx, createTableSQL); err != nil {
-		return err
-	}
-	if _, err := db.ExecContext(ctx, createIndexSQL); err != nil {
-		return err
-	}
-	return nil
+	_, err := db.ExecContext(ctx, createTableSQL)
+	return err
 }

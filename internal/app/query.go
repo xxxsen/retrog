@@ -17,7 +17,6 @@ import (
 
 // QueryCommand filters meta entries by ROM hash and prints them as JSON.
 type QueryCommand struct {
-	metaPath string
 	hashList string
 
 	hashes []string
@@ -32,7 +31,6 @@ func (c *QueryCommand) Desc() string {
 func NewQueryCommand() *QueryCommand { return &QueryCommand{} }
 
 func (c *QueryCommand) Init(f *pflag.FlagSet) {
-	f.StringVar(&c.metaPath, "meta", "", "可选：覆盖配置中的 sqlite 数据库路径")
 	f.StringVar(&c.hashList, "hash", "", "逗号分隔的 ROM 哈希列表")
 }
 
@@ -53,7 +51,6 @@ func (c *QueryCommand) PreRun(ctx context.Context) error {
 
 	logutil.GetLogger(ctx).Info("starting query",
 		zap.Strings("hashes", c.hashes),
-		zap.String("meta_override", strings.TrimSpace(c.metaPath)),
 	)
 	return nil
 }
@@ -89,11 +86,6 @@ func (c *QueryCommand) Run(ctx context.Context) error {
 func (c *QueryCommand) PostRun(ctx context.Context) error {
 	logutil.GetLogger(ctx).Info("query completed")
 	return nil
-}
-
-// DBOverridePath returns user supplied database override if provided.
-func (c *QueryCommand) DBOverridePath() string {
-	return strings.TrimSpace(c.metaPath)
 }
 
 func init() {
