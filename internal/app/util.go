@@ -2,7 +2,6 @@ package app
 
 import (
 	"crypto/md5"
-	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 )
 
 var (
-	sanitizeRegexp          = regexp.MustCompile(`[^\p{L}\p{N}._-]+`)
 	whitespaceCollapseRegex = regexp.MustCompile(`\s+`)
 	repeatPunctRegex        = regexp.MustCompile(`([[:punct:]])([[:punct:]])+`)
 	nonNameCharRegex        = regexp.MustCompile(`[^\p{L}\p{N}-]+`)
@@ -32,34 +30,6 @@ func fileMD5(path string) (string, error) {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-func fileSHA1(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open file for sha1 %s: %w", path, err)
-	}
-	defer f.Close()
-
-	hasher := sha1.New()
-	if _, err := io.Copy(hasher, f); err != nil {
-		return "", fmt.Errorf("hash file %s: %w", path, err)
-	}
-
-	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-func sanitizeName(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "unknown"
-	}
-	name = sanitizeRegexp.ReplaceAllString(name, "_")
-	name = strings.Trim(name, "._-")
-	if name == "" {
-		return "unknown"
-	}
-	return name
 }
 
 func cleanDescription(desc string) string {
