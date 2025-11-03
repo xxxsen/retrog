@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -114,17 +113,26 @@ func (c *EnsureCommand) Run(ctx context.Context) error {
 		}
 
 		downloaded := 0
-		for mediaType, fileName := range mediaSet {
+		for _, asset := range mediaSet {
+			mediaType := strings.ToLower(strings.TrimSpace(asset.Type))
 			if len(c.mediaFilter) > 0 {
-				if _, ok := c.mediaFilter[strings.ToLower(mediaType)]; !ok {
+				if _, ok := c.mediaFilter[mediaType]; !ok {
 					continue
 				}
 			}
-			if strings.TrimSpace(fileName) == "" {
+			if asset.Hash == "" {
 				continue
 			}
-			key := path.Join("media", fileName)
-			dest := filepath.Join(entryDir, filepath.Base(fileName))
+			ext := asset.Ext
+			if ext == "" {
+				ext = ""
+			}
+			key := asset.Hash + ext
+			destName := mediaType
+			if destName == "" {
+				destName = asset.Hash
+			}
+			dest := filepath.Join(entryDir, destName+ext)
 			if err := store.DownloadToFile(ctx, key, dest); err != nil {
 				return err
 			}

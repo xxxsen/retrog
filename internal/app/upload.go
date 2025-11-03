@@ -8,6 +8,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"retrog/internal/metadata"
@@ -198,13 +199,23 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 		if err != nil {
 			return nil, err
 		}
-		mediaCopy := make(map[string]string, len(mediaMap))
-		for k, v := range mediaMap {
-			mediaCopy[k] = v
+		mediaCopy := make([]MediaEntry, 0, len(mediaMap))
+		if len(mediaMap) > 0 {
+			keys := make([]string, 0, len(mediaMap))
+			for mediaType := range mediaMap {
+				keys = append(keys, mediaType)
+			}
+			sort.Strings(keys)
+			for _, mediaType := range keys {
+				asset := mediaMap[mediaType]
+				asset.Type = strings.ToLower(mediaType)
+				mediaCopy = append(mediaCopy, asset)
+			}
 		}
 		entries[md5sum] = MetaEntry{
 			Name:  cleanedName,
 			Desc:  cleanedDesc,
+			Size:  info.Size(),
 			Media: mediaCopy,
 		}
 	}
@@ -221,37 +232,45 @@ func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game)
 	return filepath.Join(categoryPath, "media", base)
 }
 
-func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]string, error) {
-	result := make(map[string]string)
+func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]MediaEntry, error) {
+	result := make(map[string]MediaEntry)
 	for mediaType, baseName := range mediaCandidates {
-		path, err := c.pickMediaSource(categoryPath, defaultDir, gameDef, mediaType, baseName)
+		path, err := c.pickMediaSource(ctx, categoryPath, defaultDir, gameDef, mediaType, baseName)
 		if err != nil {
 			return nil, err
 		}
 		if path == "" {
 			continue
 		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, fmt.Errorf("stat media file %s: %w", path, err)
+		}
 		md5sum, err := fileMD5(path)
 		if err != nil {
 			return nil, err
 		}
 		ext := strings.ToLower(filepath.Ext(path))
-		key := fmt.Sprintf("media/%s%s", md5sum, ext)
+		key := fmt.Sprintf("%s%s", md5sum, ext)
 		contentType := mime.TypeByExtension(ext)
 		if err := store.UploadFile(ctx, key, path, contentType); err != nil {
 			return nil, err
 		}
-		result[mediaType] = strings.TrimPrefix(key, "media/")
+		result[mediaType] = MediaEntry{
+			Hash: md5sum,
+			Ext:  ext,
+			Size: info.Size(),
+		}
 	}
 	return result, nil
 }
 
-func (c *UploadCommand) pickMediaSource(categoryPath, defaultDir string, gameDef metadata.Game, mediaType, baseName string) (string, error) {
+func (c *UploadCommand) pickMediaSource(ctx context.Context, categoryPath, defaultDir string, gameDef metadata.Game, mediaType, baseName string) (string, error) {
 	if candidate := c.assetPathFromMetadata(categoryPath, gameDef, mediaType); candidate != "" {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}
-		logutil.GetLogger(context.Background()).Warn("asset path missing, fallback to prefix",
+		logutil.GetLogger(ctx).Warn("asset path missing, fallback to prefix",
 			zap.String("media_type", mediaType),
 			zap.String("path", candidate),
 		)
