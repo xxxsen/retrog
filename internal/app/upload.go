@@ -28,6 +28,14 @@ var mediaCandidates = map[string]string{
 	"logo":       "logo",
 }
 
+var mediaAssetKeys = map[string][]string{
+	"boxart":     {"boxart", "box_front", "boxfront"},
+	"boxfront":   {"box_front", "boxfront", "boxart"},
+	"screenshot": {"screenshot"},
+	"video":      {"video"},
+	"logo":       {"logo"},
+}
+
 // UploadCommand wraps the upload workflow and exposes a Run entrypoint.
 type UploadCommand struct {
 	romDir   string
@@ -154,6 +162,7 @@ func (c *UploadCommand) processCategory(ctx context.Context, store storage.Clien
 	if err != nil {
 		return nil, fmt.Errorf("parse metadata %s: %w", metaPath, err)
 	}
+	doc.Cat = catName
 
 	if len(doc.Games) == 0 {
 		return nil, nil
@@ -221,7 +230,7 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 		})
 	}
 
-	media, err := c.uploadMedia(ctx, store, primaryMediaDir)
+	media, err := c.uploadMedia(ctx, store, categoryPath, primaryMediaDir, gameDef)
 	if err != nil {
 		return nil, err
 	}
@@ -239,13 +248,10 @@ func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game)
 	return filepath.Join(categoryPath, "media", base)
 }
 
-func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, dir string) (Media, error) {
+func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (Media, error) {
 	res := Media{}
-	if dir == "" {
-		return res, nil
-	}
 	for mediaType, baseName := range mediaCandidates {
-		path, err := c.firstFileWithPrefix(dir, baseName)
+		path, err := c.pickMediaSource(categoryPath, defaultDir, gameDef, mediaType, baseName)
 		if err != nil {
 			return res, err
 		}
@@ -262,9 +268,46 @@ func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, d
 		if err := store.UploadFile(ctx, key, path, contentType); err != nil {
 			return res, err
 		}
-		assignMediaPath(&res, mediaType, key)
+		assignMediaPath(&res, mediaType, strings.TrimPrefix(key, "media/"))
 	}
 	return res, nil
+}
+
+func (c *UploadCommand) pickMediaSource(categoryPath, defaultDir string, gameDef metadata.Game, mediaType, baseName string) (string, error) {
+	if candidate := c.assetPathFromMetadata(categoryPath, gameDef, mediaType); candidate != "" {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		logutil.GetLogger(context.Background()).Warn("asset path missing, fallback to prefix",
+			zap.String("media_type", mediaType),
+			zap.String("path", candidate),
+		)
+	}
+	if defaultDir == "" {
+		return "", nil
+	}
+	return c.firstFileWithPrefix(defaultDir, baseName)
+}
+
+func (c *UploadCommand) assetPathFromMetadata(categoryPath string, gameDef metadata.Game, mediaType string) string {
+	if len(gameDef.Assets) == 0 {
+		return ""
+	}
+	aliases := mediaAssetKeys[mediaType]
+	for _, alias := range aliases {
+		if val, ok := gameDef.Assets[alias]; ok {
+			trimmed := strings.TrimSpace(val)
+			if trimmed == "" {
+				continue
+			}
+			candidate := filepath.FromSlash(trimmed)
+			if filepath.IsAbs(candidate) {
+				return candidate
+			}
+			return filepath.Join(categoryPath, candidate)
+		}
+	}
+	return ""
 }
 
 func assignMediaPath(media *Media, mediaType, path string) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -323,8 +324,12 @@ func (c *EnsureCommand) downloadMedia(ctx context.Context, store storage.Client,
 		if item.src == "" {
 			continue
 		}
+		key := item.src
+		if !strings.HasPrefix(key, "media/") {
+			key = path.Join("media", key)
+		}
 		dest := filepath.Join(mediaDir, item.name+filepath.Ext(item.src))
-		if err := store.DownloadToFile(ctx, item.src, dest); err != nil {
+		if err := store.DownloadToFile(ctx, key, dest); err != nil {
 			return err
 		}
 	}

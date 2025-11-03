@@ -12,6 +12,7 @@ type Game struct {
 	Name        string
 	Files       []string
 	Description string
+	Assets      map[string]string
 }
 
 // Document represents a metadata file and its games.
@@ -45,6 +46,20 @@ func Parse(path string) (*Document, error) {
 		key := strings.ToLower(strings.TrimSpace(line[:colon]))
 		value := strings.TrimSpace(line[colon+1:])
 
+		if strings.HasPrefix(key, "assets.") {
+			if current == nil {
+				continue
+			}
+			if current.Assets == nil {
+				current.Assets = make(map[string]string)
+			}
+			assetKey := strings.TrimPrefix(key, "assets.")
+			if assetKey != "" {
+				current.Assets[assetKey] = value
+			}
+			continue
+		}
+
 		switch key {
 		case "collection":
 			if doc.Collection == "" {
@@ -60,11 +75,11 @@ func Parse(path string) (*Document, error) {
 				continue
 			}
 			current.Files = append(current.Files, value)
-		case "description":
-			if current == nil {
-				continue
-			}
-			current.Description = value
+	case "description":
+		if current == nil {
+			continue
+		}
+		current.Description = value
 		default:
 			// Ignore other keys for now.
 		}

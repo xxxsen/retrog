@@ -72,7 +72,7 @@ roms/
 
 - `metadata.pegasus.txt` 需为 Pegasus 格式，本工具至少读取 `game`、`file`、`description` 字段。
 - ROM 文件应与元数据在同一目录，并且名称与 `file:` 指定的文件一致。
-- 媒体资源可选，建议置于 `media/<rom文件名（不含扩展名）>/` 下，并以 `boxart`、`boxfront`、`screenshot`、`video`、`logo` 为前缀方便识别。
+- 媒体资源可选，建议置于 `media/<rom文件名（不含扩展名）>/` 下，并以 `boxart`、`boxfront`、`screenshot`、`video`、`logo` 为前缀方便识别；也可以在 `metadata.pegasus.txt` 中使用 `assets.box_front`、`assets.logo`、`assets.video` 等字段显式指定资源路径。
 
 上传完成后会生成形如以下结构的 JSON：
 
@@ -115,10 +115,14 @@ roms/
 ### `upload`
 
 ```
-retrog upload --dir <rom根目录> --meta <输出meta.json> [--config <配置文件>]
+retrog upload \
+  --dir <rom根目录> \
+  --meta <输出meta.json> \
+  [--cat gb,fc] \
+  [--config <配置文件>]
 ```
 
-- 扫描 `--dir` 下的所有子目录。
+- 扫描 `--dir` 下的所有子目录；若指定 `--cat`（逗号分隔），则仅处理对应目录。
 - 解析 `metadata.pegasus.txt` 并将 ROM / 媒体上传至 S3。
 - 计算文件 MD5、大小等信息写入 meta。
 - 元数据文件保存到 `--meta` 指定路径。
