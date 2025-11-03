@@ -67,7 +67,7 @@ func (c *VerifyCommand) PreRun(ctx context.Context) error {
 
 // Run executes the verify command.
 func (c *VerifyCommand) Run(ctx context.Context) error {
-	res, err := verify(ctx, c.rootDir)
+	res, err := c.verify(ctx, c.rootDir)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func init() {
 	RegisterRunner("verify", func() IRunner { return NewVerifyCommand() })
 }
 
-func verify(ctx context.Context, root string) (*VerifyResult, error) {
+func (c *VerifyCommand) verify(ctx context.Context, root string) (*VerifyResult, error) {
 	info, err := os.Stat(root)
 	if err != nil {
 		return nil, fmt.Errorf("stat root %s: %w", root, err)
@@ -134,7 +134,7 @@ func verify(ctx context.Context, root string) (*VerifyResult, error) {
 
 		entry := FileSignature{Path: path, SHA1: sha1sum}
 
-		if isMediaFile(path) {
+		if c.isMediaFile(path) {
 			mediaHashes[md5sum] = append(mediaHashes[md5sum], entry)
 		} else {
 			romHashes[md5sum] = append(romHashes[md5sum], entry)
@@ -147,13 +147,13 @@ func verify(ctx context.Context, root string) (*VerifyResult, error) {
 	}
 
 	result := &VerifyResult{}
-	result.RomDuplicates, result.RomCollisions = classifyDuplicates(romHashes)
-	result.MediaDuplicates, result.MediaCollisions = classifyDuplicates(mediaHashes)
+	result.RomDuplicates, result.RomCollisions = c.classifyDuplicates(romHashes)
+	result.MediaDuplicates, result.MediaCollisions = c.classifyDuplicates(mediaHashes)
 
 	return result, nil
 }
 
-func classifyDuplicates(data map[string][]FileSignature) (dupes []DuplicateGroup, collisions []DuplicateGroup) {
+func (c *VerifyCommand) classifyDuplicates(data map[string][]FileSignature) (dupes []DuplicateGroup, collisions []DuplicateGroup) {
 	for md5sum, entries := range data {
 		if len(entries) < 2 {
 			continue
@@ -174,7 +174,7 @@ func classifyDuplicates(data map[string][]FileSignature) (dupes []DuplicateGroup
 	return dupes, collisions
 }
 
-func isMediaFile(path string) bool {
+func (c *VerifyCommand) isMediaFile(path string) bool {
 	slashed := filepath.ToSlash(path)
 	return strings.Contains(slashed, "/media/")
 }

@@ -231,7 +231,7 @@ func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, d
 		return res, nil
 	}
 	for mediaType, baseName := range mediaCandidates {
-		path, err := firstFileWithPrefix(dir, baseName)
+		path, err := c.firstFileWithPrefix(dir, baseName)
 		if err != nil {
 			return res, err
 		}
@@ -273,7 +273,7 @@ func (c *UploadCommand) PostRun(ctx context.Context) error {
 	return nil
 }
 
-func firstFileWithPrefix(dir, prefix string) (string, error) {
+func (c *UploadCommand) firstFileWithPrefix(dir, prefix string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
