@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+
 	"retrog/internal/app"
+	appdb "retrog/internal/db"
 	"retrog/internal/storage"
 
 	"github.com/spf13/cobra"
+	"github.com/xxxsen/common/database"
+	"github.com/xxxsen/common/database/sqlite"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
@@ -44,6 +48,20 @@ func init() {
 					return err
 				}
 				storage.SetDefaultClient(client)
+
+				dbPath := cc.DB
+				if override, ok := rinst.(app.DBPathOverride); ok {
+					if val := override.DBOverridePath(); val != "" {
+						dbPath = val
+					}
+				}
+				sqliteDB, err := sqlite.New(dbPath, func(db database.IDatabase) error {
+					return appdb.EnsureSchema(ctx, db)
+				})
+				if err != nil {
+					return err
+				}
+				appdb.SetDefault(sqliteDB)
 
 				//执行app流程
 				if err := rinst.PreRun(ctx); err != nil {

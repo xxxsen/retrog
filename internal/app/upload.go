@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"mime"
@@ -10,16 +9,25 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	appdb "retrog/internal/db"
 	"retrog/internal/metadata"
 	"retrog/internal/storage"
 
 	"github.com/spf13/pflag"
+	"github.com/xxxsen/common/database"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
 
 const metadataFile = "metadata.pegasus.txt"
+
+const (
+	selectMetaSQL = `SELECT id FROM retro_game_meta_tab WHERE rom_hash = ?`
+	insertMetaSQL = `INSERT INTO retro_game_meta_tab (rom_hash, rom_name, rom_desc, rom_size, create_time, update_time, ext_info) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	updateMetaSQL = `UPDATE retro_game_meta_tab SET rom_name = ?, rom_desc = ?, rom_size = ?, update_time = ?, ext_info = ? WHERE rom_hash = ?`
+)
 
 var mediaCandidates = map[string]string{
 	"boxart":     "boxart",
@@ -38,32 +46,29 @@ var mediaAssetAliases = map[string][]string{
 }
 
 type UploadCommand struct {
-	romDir   string
-	metaPath string
-	cats     []string
+	romDir string
+	cats   []string
 }
 
 func (c *UploadCommand) Name() string { return "upload" }
 
 func (c *UploadCommand) Desc() string {
-	return "上传媒体资源并输出以 ROM 哈希为键的元数据"
+	return "上传媒体资源并写入以 ROM 哈希为键的元数据"
 }
 
 func NewUploadCommand() *UploadCommand { return &UploadCommand{} }
 
 func (c *UploadCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.romDir, "dir", "", "ROM 根目录")
-	f.StringVar(&c.metaPath, "meta", "", "生成的 meta.json 输出路径")
 	f.StringSliceVar(&c.cats, "cat", nil, "要处理的子目录列表，逗号分隔；为空则全部上传")
 }
 
 func (c *UploadCommand) PreRun(ctx context.Context) error {
-	if c.romDir == "" || c.metaPath == "" {
-		return errors.New("upload requires --dir and --meta")
+	if c.romDir == "" {
+		return errors.New("upload requires --dir")
 	}
 	logutil.GetLogger(ctx).Info("starting upload",
 		zap.String("dir", c.romDir),
-		zap.String("meta", c.metaPath),
 	)
 	return nil
 }
@@ -81,18 +86,15 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(meta, "", "  ")
+	inserted, updated, err := c.persistMeta(ctx, meta)
 	if err != nil {
-		return fmt.Errorf("marshal meta json: %w", err)
-	}
-
-	if err := os.WriteFile(c.metaPath, data, 0o644); err != nil {
-		return fmt.Errorf("write meta file: %w", err)
+		return err
 	}
 
 	logger.Info("upload run completed",
-		zap.String("meta_path", c.metaPath),
 		zap.Int("entries", len(meta)),
+		zap.Int("inserted", inserted),
+		zap.Int("updated", updated),
 	)
 	return nil
 }
@@ -141,6 +143,50 @@ func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (Me
 	}
 
 	return meta, nil
+}
+
+func (c *UploadCommand) persistMeta(ctx context.Context, meta Meta) (inserted int, updated int, err error) {
+	store := appdb.Default()
+	if store == nil {
+		return 0, 0, errors.New("database not initialised")
+	}
+
+	err = store.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
+		for hash, entry := range meta {
+			extJSON, err := entry.MarshalExtInfo()
+			if err != nil {
+				return err
+			}
+
+			rows, err := tx.QueryContext(ctx, selectMetaSQL, hash)
+			if err != nil {
+				return err
+			}
+			var existingID int64
+			if rows.Next() {
+				if err := rows.Scan(&existingID); err != nil {
+					rows.Close()
+					return err
+				}
+			}
+			rows.Close()
+
+			now := time.Now().Unix()
+			if existingID == 0 {
+				if _, err := tx.ExecContext(ctx, insertMetaSQL, hash, entry.Name, entry.Desc, entry.Size, now, now, extJSON); err != nil {
+					return err
+				}
+				inserted++
+			} else {
+				if _, err := tx.ExecContext(ctx, updateMetaSQL, entry.Name, entry.Desc, entry.Size, now, extJSON, hash); err != nil {
+					return err
+				}
+				updated++
+			}
+		}
+		return nil
+	})
+	return inserted, updated, err
 }
 
 func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]MetaEntry, error) {

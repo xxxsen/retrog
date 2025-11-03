@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config describes the application level configuration loaded from json.
 type Config struct {
 	S3 S3Config `json:"s3"`
+	DB string   `json:"db"`
 }
 
 // S3Config holds the options for accessing the object store.
@@ -75,6 +77,9 @@ func (c *Config) Validate() error {
 	}
 	if c.S3.Bucket == "" {
 		return errors.New("config.s3.bucket must be set")
+	}
+	if strings.TrimSpace(c.DB) == "" {
+		return errors.New("config.db must be set")
 	}
 	return nil
 }

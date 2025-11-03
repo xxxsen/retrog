@@ -1,11 +1,11 @@
 # retrog
 
-retrog 是一个 Go 编写的工具集，旨在帮助将 Pegasus ROM 资源迁移到兼容 S3 的对象存储，同时生成新的元数据、按需下载内容、清理测试环境，并辅助排查重复文件。
+retrog 是一个 Go 编写的工具集，旨在帮助将 Pegasus ROM 资源迁移到兼容 S3 的对象存储，同时生成新的元数据、按需查询内容并清理测试环境。
 
 ## 功能亮点
 
 - **上传**：扫描 ROM 根目录，只上传媒体资源（封面、截图、视频等）到 S3，文件名直接使用媒体文件的 MD5。
-- **生成元数据**：读取各目录下的 `metadata.pegasus.txt`，输出以 ROM 哈希为键的 JSON，便于后续按需拉取媒体。
+- **生成元数据**：读取各目录下的 `metadata.pegasus.txt`，并将记录按 ROM 哈希写入 SQLite，便于后续查询与复用。
 - **元数据查询**：通过 `query` 命令按 ROM 哈希筛选元数据并输出 JSON，便于快速查看资源信息。
 - **清理环境**：提供清空测试桶的能力，方便重置环境。
 - **统一生命周期**：所有命令遵循统一的 `Init → PreRun → Run → PostRun` 流程，并通过注册中心自动挂载到 CLI。
@@ -45,7 +45,8 @@ go build ./cmd/retrog
     "secret_access_key": "minioadmin",
     "session_token": "",
     "force_path_style": true
-  }
+  },
+  "db": "./.vscode/meta.db"
 }
 ```
 
@@ -53,6 +54,7 @@ go build ./cmd/retrog
 - `bucket`：统一存储桶，所有媒体资源会以 `<md5><ext>` 的形式上传到根目录。
 - `force_path_style`：若对象存储需要 Path-Style 访问（例如 MinIO 默认配置），请设为 `true`。
 - 若省略凭证，SDK 会使用环境变量或默认链路自动获取。
+- `db`：SQLite 数据库文件路径，用于保存 ROM 元数据。
 
 ---
 
@@ -73,7 +75,7 @@ roms/
 - ROM 文件需与元数据在同一目录，并与 `file:` 条目匹配；工具不会上传 ROM，只会读取其哈希值。
 - 媒体资源建议放在 `media/<rom文件名（不含扩展名）>/` 子目录，并使用 `boxart`、`boxfront`、`screenshot`、`video`、`logo` 等前缀；若使用新的 `assets.*` 字段（例如 `assets.box_front: media/kof96ae20/boxfront.jpg`），则会直接按指定路径取文件。
 
-`upload` 命令会生成一个以 ROM MD5 为键的 JSON：
+`retrog query` 命令会输出一个以 ROM MD5 为键的 JSON（底层数据存放在 SQLite 的 `retro_game_meta_tab` 表中）：
 
 ```json
 {
@@ -100,7 +102,7 @@ roms/
 ```
 
 - JSON 值包含清洗后的 `name`、`desc`、ROM 大小以及媒体列表。
-- 媒体文件记录了类型、哈希、扩展名和体积，可直接推导 S3 对象键 `<hash><ext>`。
+- 媒体文件记录了类型、哈希、扩展名和体积，可直接推导 S3 对象键 `<hash><ext>`；同样的数据也存储在 `ext_info` 字段中。
 
 ---
 
@@ -113,7 +115,6 @@ roms/
 ```
 retrog upload \
   --dir <rom根目录> \
-  --meta <输出meta.json> \
   [--cat gb,fc] \
   [--config <配置文件>]
 ```
@@ -121,19 +122,19 @@ retrog upload \
 - 扫描 `--dir` 下的所有子目录；若指定 `--cat`（逗号分隔），则仅处理对应目录。
 - 解析 `metadata.pegasus.txt`，只会上传媒体文件到 S3，ROM 仍保留在本地。
 - 支持 `assets.*` 字段覆盖媒体路径；若未设置则回退到 `media/<rom名>/` 目录下匹配前缀文件。
-- 媒体文件上传后使用 `<媒体文件MD5><扩展名>` 作为对象键，并记录在 meta 中。
-- 生成以 ROM MD5 为键的 `meta.json`，包含清洗后的名称、描述、ROM 大小以及媒体条目（类型、哈希、扩展名、体积）。
-- 输出文件写入 `--meta` 指定路径。
+- 媒体文件上传后使用 `<媒体文件MD5><扩展名>` 作为对象键，并记录在 SQLite 中。
+- ROM 元数据会写入 SQLite（`retro_game_meta_tab`），包含清洗后的名称、描述、ROM 大小以及媒体条目（类型、哈希、扩展名、体积）。
 
 ### `query`
 
 ```
 retrog query \
-  --meta meta.json \
+  [--meta ./meta.db] \
   --hash <hash1,hash2>
 ```
 
 - `--hash` 为必填，使用逗号分隔多个 ROM 哈希。
+- `--meta` 可选，用于覆盖配置中的 SQLite 数据库路径。
 - 输出结果为 JSON，键为匹配的 ROM 哈希，值为对应的元数据。
 - 若某个哈希在 meta 中不存在，会输出告警日志但不会中断命令。
 - 可配合 `jq` 等工具对输出结果进一步处理。
