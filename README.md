@@ -4,12 +4,12 @@ retrog 是一个 Go 编写的工具集，旨在帮助将 Pegasus ROM 资源迁�
 
 ## 功能亮点
 
-- **上传**：将 ROM 与媒体资源（截图、封面、视频等）上传至 S3，使用内容的 MD5 作为文件名，自动区分 `rom/` 与 `media/` 目录。
-- **生成元数据**：解析 `metadata.pegasus.txt` 文件，输出统一的 JSON 元数据，方便其他启动器或工具引用。
-- **按需同步**：依据生成的 JSON，按分类、类型（ROM / 媒体）把资源回写到本地，保持目录整洁。
-- **清理环境**：一键清空测试专用的 S3 前缀，便于反复调试。
-- **重复检测**：扫描目录，找出 MD5 / SHA1 一致或冲突的文件，避免资源冗余。
-- **统一生命周期**：所有命令实现相同的 `Init → PreRun → Run → PostRun` 流程，并通过注册中心自动挂载到 CLI。
+- **上传**：扫描 ROM 根目录，只上传媒体资源（封面、截图、视频等）到 S3 的 `media/` 前缀，并以 ROM 的 MD5 命名。
+- **生成元数据**：读取各目录下的 `metadata.pegasus.txt`，输出以 ROM 哈希为键的 JSON，便于后续按需拉取媒体。
+- **按需同步**：通过 `ensure` 命令按 ROM 哈希下载媒体文件，可按类型过滤，快速构建素材缓存。
+- **清理环境**：提供清空测试桶的能力，方便重置环境。
+- **重复检测**：扫描本地目录，找出重复或碰撞的 ROM / 媒体文件。
+- **统一生命周期**：所有命令遵循统一的 `Init → PreRun → Run → PostRun` 流程，并通过注册中心自动挂载到 CLI。
 
 ---
 
@@ -51,7 +51,7 @@ go build ./cmd/retrog
 ```
 
 - `host`：S3/MinIO 访问地址，可使用 `https://` 或裸地址。
-- `bucket`：统一存储桶，ROM 存放在 `rom/<md5>.<ext>`，媒体存放在 `media/<md5>.<ext>`。
+- `bucket`：统一存储桶，所有媒体资源会上传至 `media/<md5>.<ext>`。
 - `force_path_style`：若对象存储需要 Path-Style 访问（例如 MinIO 默认配置），请设为 `true`。
 - 若省略凭证，SDK 会使用环境变量或默认链路自动获取。
 
@@ -66,45 +66,31 @@ roms/
     Super Mario Land.gb
     media/
       Super Mario Land/
-        boxart.png
+        boxfront.png
         video.mp4
 ```
 
-- `metadata.pegasus.txt` 需为 Pegasus 格式，本工具至少读取 `game`、`file`、`description` 字段。
-- ROM 文件应与元数据在同一目录，并且名称与 `file:` 指定的文件一致。
-- 媒体资源可选，建议置于 `media/<rom文件名（不含扩展名）>/` 下，并以 `boxart`、`boxfront`、`screenshot`、`video`、`logo` 为前缀方便识别；也可以在 `metadata.pegasus.txt` 中使用 `assets.box_front`、`assets.logo`、`assets.video` 等字段显式指定资源路径。
+- `metadata.pegasus.txt` 需为 Pegasus 格式，至少包含 `game`、`file`、`description` 字段。
+- ROM 文件需与元数据在同一目录，并与 `file:` 条目匹配；工具不会上传 ROM，只会读取其哈希值。
+- 媒体资源建议放在 `media/<rom文件名（不含扩展名）>/` 子目录，并使用 `boxart`、`boxfront`、`screenshot`、`video`、`logo` 等前缀；若使用新的 `assets.*` 字段（例如 `assets.box_front: media/kof96ae20/boxfront.jpg`），则会直接按指定路径取文件。
 
-上传完成后会生成形如以下结构的 JSON：
+`upload` 命令会生成一个以 ROM MD5 为键的 JSON：
 
 ```json
 {
-  "category": [
-    {
-      "cat_name": "Game Boy",
-      "game_list": [
-        {
-          "name": "Super-Mario-Land",
-          "desc": "...",
-          "files": [
-            {
-              "hash": "b59d...",
-              "ext": ".gb",
-              "size": 262144,
-              "file_name": "Super Mario Land.gb"
-            }
-          ],
-          "media": {
-            "boxart": "media/b59d...png",
-            "video": "media/a381...mp4"
-          }
-        }
-      ]
+  "b59d...": {
+    "name": "Super-Mario-Land",
+    "desc": "......",
+    "media": {
+      "boxart": "37315071264cbc216e4ba379875ba1e1.png",
+      "video": "a381...mp4"
     }
-  ]
+  }
 }
 ```
 
-注意：JSON 中记录的是相对路径（`rom/...`、`media/...`），真正的存储桶从配置中获取。
+- JSON 值只包含展示所需的 `name`、`desc`、`media` 字段。
+- 媒体文件名已去掉 `media/` 前缀，方便与 `ensure` 命令组合使用。
 
 ---
 
@@ -123,26 +109,26 @@ retrog upload \
 ```
 
 - 扫描 `--dir` 下的所有子目录；若指定 `--cat`（逗号分隔），则仅处理对应目录。
-- 解析 `metadata.pegasus.txt` 并将 ROM / 媒体上传至 S3。
-- 计算文件 MD5、大小等信息写入 meta。
-- 元数据文件保存到 `--meta` 指定路径。
+- 解析 `metadata.pegasus.txt`，只会上传媒体文件到 S3，ROM 仍保留在本地。
+- 支持 `assets.*` 字段覆盖媒体路径；若未设置则回退到 `media/<rom名>/` 目录下匹配前缀文件。
+- 生成以 ROM MD5 为键的 `meta.json`，包含清洗后的名称、描述和媒体文件名（不含 `media/` 前缀）。
+- 输出文件写入 `--meta` 指定路径。
 
 ### `ensure`
 
 ```
 retrog ensure \
   --meta meta.json \
-  --cat "Game Boy" \
-  --dir ./gb-pack \
-  [--data rom|media|rom,media] \
-  [--unzip] \
+  --dir ./media-cache \
+  --hash <hash1,hash2> \
+  [--media boxart,logo] \
   [--config <配置文件>]
 ```
 
 - 要求 `--dir` 不存在或为空，否则直接报错。
-- 根据 `--data` 控制下载内容范围，默认 ROM 与媒体全部下载。
-- ROM 文件名优先使用 meta 中记录的 `file_name`，多文件会自动生成 `_part_n` 后缀。
-- `--unzip` 会解压只有单个文件的压缩包，并保留原始扩展名。
+- `--hash` 为必填，使用逗号分隔多个 ROM 哈希。
+- 默认下载所有记录的媒体类型，可用 `--media`（不区分大小写）限制。
+- 每个哈希会生成一个同名子目录，媒体文件按记录的文件名保存；若 meta 中缺失媒体会记录告警日志。
 
 ### `verify`
 
@@ -160,7 +146,7 @@ retrog verify --dir <待检查目录>
 retrog clean-bucket --force [--config <配置文件>]
 ```
 
-- 清空配置中指定桶内的所有对象（即 `rom/` 与 `media/` 前缀）。
+- 清空配置中指定桶内的所有对象（主要用于移除 `media/` 下的测试产物）。
 - 为防误操作，必须显式携带 `--force`。
 
 ---

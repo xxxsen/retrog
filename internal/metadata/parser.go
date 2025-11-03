@@ -17,8 +17,8 @@ type Game struct {
 
 // Document represents a metadata file and its games.
 type Document struct {
-	Collection string
 	Cat        string
+	Collection string
 	Games      []Game
 }
 
@@ -75,11 +75,11 @@ func Parse(path string) (*Document, error) {
 				continue
 			}
 			current.Files = append(current.Files, value)
-	case "description":
-		if current == nil {
-			continue
-		}
-		current.Description = value
+		case "description":
+			if current == nil {
+				continue
+			}
+			current.Description = value
 		default:
 			// Ignore other keys for now.
 		}

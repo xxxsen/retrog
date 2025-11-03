@@ -18,7 +18,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const metadataFileName = "metadata.pegasus.txt"
+const metadataFile = "metadata.pegasus.txt"
 
 var mediaCandidates = map[string]string{
 	"boxart":     "boxart",
@@ -28,7 +28,7 @@ var mediaCandidates = map[string]string{
 	"logo":       "logo",
 }
 
-var mediaAssetKeys = map[string][]string{
+var mediaAssetAliases = map[string][]string{
 	"boxart":     {"boxart", "box_front", "boxfront"},
 	"boxfront":   {"box_front", "boxfront", "boxart"},
 	"screenshot": {"screenshot"},
@@ -36,33 +36,26 @@ var mediaAssetKeys = map[string][]string{
 	"logo":       {"logo"},
 }
 
-// UploadCommand wraps the upload workflow and exposes a Run entrypoint.
 type UploadCommand struct {
 	romDir   string
 	metaPath string
 	cats     []string
 }
 
-// Name returns the command identifier.
 func (c *UploadCommand) Name() string { return "upload" }
 
 func (c *UploadCommand) Desc() string {
-	return "Upload ROMs and media to object storage and emit metadata"
+	return "上传媒体资源并输出以 ROM 哈希为键的元数据"
 }
 
-// NewUploadCommand constructs an executable upload command.
-func NewUploadCommand() *UploadCommand {
-	return &UploadCommand{}
+func NewUploadCommand() *UploadCommand { return &UploadCommand{} }
+
+func (c *UploadCommand) Init(f *pflag.FlagSet) {
+	f.StringVar(&c.romDir, "dir", "", "ROM 根目录")
+	f.StringVar(&c.metaPath, "meta", "", "生成的 meta.json 输出路径")
+	f.StringSliceVar(&c.cats, "cat", nil, "要处理的子目录列表，逗号分隔；为空则全部上传")
 }
 
-// Init registers CLI flags that affect the command.
-func (c *UploadCommand) Init(fst *pflag.FlagSet) {
-	fst.StringVar(&c.romDir, "dir", "", "ROM root directory")
-	fst.StringVar(&c.metaPath, "meta", "", "Path to write generated meta JSON")
-	fst.StringSliceVar(&c.cats, "cat", nil, "Comma separated list of categories to upload; empty means all")
-}
-
-// PreRun performs validation and object initialisation as needed.
 func (c *UploadCommand) PreRun(ctx context.Context) error {
 	if c.romDir == "" || c.metaPath == "" {
 		return errors.New("upload requires --dir and --meta")
@@ -74,7 +67,6 @@ func (c *UploadCommand) PreRun(ctx context.Context) error {
 	return nil
 }
 
-// Run executes the upload command logic.
 func (c *UploadCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 
@@ -99,103 +91,95 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 
 	logger.Info("upload run completed",
 		zap.String("meta_path", c.metaPath),
-		zap.Int("categories", len(meta.Category)),
+		zap.Int("entries", len(meta)),
 	)
-
 	return nil
 }
 
-func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (*Meta, error) {
+func (c *UploadCommand) PostRun(ctx context.Context) error { return nil }
+
+func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (Meta, error) {
 	logger := logutil.GetLogger(ctx)
 	logger.Info("scanning rom root", zap.String("root", c.romDir))
 
-	rootEntries, err := os.ReadDir(c.romDir)
+	entries, err := os.ReadDir(c.romDir)
 	if err != nil {
 		return nil, fmt.Errorf("read rom root %s: %w", c.romDir, err)
 	}
 
-	result := &Meta{}
-
 	allowed := make(map[string]struct{})
 	if len(c.cats) > 0 {
 		for _, name := range c.cats {
-			trimmed := strings.TrimSpace(name)
-			if trimmed != "" {
+			if trimmed := strings.TrimSpace(name); trimmed != "" {
 				allowed[trimmed] = struct{}{}
 			}
 		}
 	}
 
-	for _, entry := range rootEntries {
+	meta := make(Meta)
+
+	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
-		categoryPath := filepath.Join(c.romDir, entry.Name())
 		if len(allowed) > 0 {
 			if _, ok := allowed[entry.Name()]; !ok {
 				continue
 			}
 		}
-		cat, err := c.processCategory(ctx, store, categoryPath, entry.Name())
+
+		categoryPath := filepath.Join(c.romDir, entry.Name())
+		records, err := c.processCategory(ctx, store, categoryPath)
 		if err != nil {
 			return nil, err
 		}
-		if cat != nil {
-			result.Category = append(result.Category, *cat)
-			logger.Debug("category processed",
-				zap.String("path", categoryPath),
-				zap.String("name", cat.CatName),
-				zap.Int("games", len(cat.GameList)),
-			)
+		for hash, item := range records {
+			meta[hash] = item
 		}
+		logger.Debug("category processed", zap.String("path", categoryPath), zap.Int("records", len(records)))
 	}
 
-	return result, nil
+	return meta, nil
 }
 
-func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string, catName string) (*Category, error) {
-	metaPath := filepath.Join(categoryPath, metadataFileName)
+func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]MetaEntry, error) {
+	metaPath := filepath.Join(categoryPath, metadataFile)
 	logger := logutil.GetLogger(ctx)
-	logger.Debug("processing category metadata", zap.String("meta", metaPath))
+	logger.Debug("processing metadata", zap.String("path", metaPath))
 
 	doc, err := metadata.Parse(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse metadata %s: %w", metaPath, err)
 	}
-	doc.Cat = catName
-
+	doc.Cat = filepath.Base(categoryPath)
 	if len(doc.Games) == 0 {
-		return nil, nil
+		return map[string]MetaEntry{}, nil
 	}
 
-	cat := &Category{CatName: catName, Collection: doc.Collection}
-
+	result := make(map[string]MetaEntry)
 	for _, gameDef := range doc.Games {
-		game, err := c.processGame(ctx, store, categoryPath, gameDef)
+		entries, err := c.processGame(ctx, store, categoryPath, gameDef)
 		if err != nil {
 			return nil, err
 		}
-		cat.GameList = append(cat.GameList, *game)
+		for hash, item := range entries {
+			result[hash] = item
+		}
 	}
-
-	logger.Debug("category games compiled",
-		zap.String("category", cat.CatName),
-		zap.Int("games", len(cat.GameList)),
-	)
-
-	return cat, nil
+	return result, nil
 }
 
-func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (*Game, error) {
+func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (map[string]MetaEntry, error) {
+	entries := make(map[string]MetaEntry)
+
 	cleanedName := cleanGameName(gameDef.Name)
 	cleanedDesc := cleanDescription(gameDef.Description)
 
-	game := &Game{
-		Name: cleanedName,
-		Desc: cleanedDesc,
+	mediaDir := c.findMediaDir(categoryPath, gameDef)
+	mediaMap, err := c.collectMedia(ctx, store, categoryPath, mediaDir, gameDef)
+	if err != nil {
+		return nil, err
 	}
-
-	primaryMediaDir := c.findMediaDir(categoryPath, gameDef)
 
 	for _, rel := range gameDef.Files {
 		rel = strings.TrimSpace(rel)
@@ -214,29 +198,18 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 		if err != nil {
 			return nil, err
 		}
-		ext := strings.ToLower(filepath.Ext(full))
-		key := fmt.Sprintf("rom/%s%s", md5sum, ext)
-		originalName := filepath.Base(rel)
-		contentType := mime.TypeByExtension(ext)
-		if err := store.UploadFile(ctx, key, full, contentType); err != nil {
-			return nil, err
+		mediaCopy := make(map[string]string, len(mediaMap))
+		for k, v := range mediaMap {
+			mediaCopy[k] = v
 		}
-
-		game.Files = append(game.Files, File{
-			Hash:     md5sum,
-			Ext:      ext,
-			Size:     info.Size(),
-			FileName: originalName,
-		})
+		entries[md5sum] = MetaEntry{
+			Name:  cleanedName,
+			Desc:  cleanedDesc,
+			Media: mediaCopy,
+		}
 	}
 
-	media, err := c.uploadMedia(ctx, store, categoryPath, primaryMediaDir, gameDef)
-	if err != nil {
-		return nil, err
-	}
-
-	game.Media = media
-	return game, nil
+	return entries, nil
 }
 
 func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game) string {
@@ -248,29 +221,29 @@ func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game)
 	return filepath.Join(categoryPath, "media", base)
 }
 
-func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (Media, error) {
-	res := Media{}
+func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]string, error) {
+	result := make(map[string]string)
 	for mediaType, baseName := range mediaCandidates {
 		path, err := c.pickMediaSource(categoryPath, defaultDir, gameDef, mediaType, baseName)
 		if err != nil {
-			return res, err
+			return nil, err
 		}
 		if path == "" {
 			continue
 		}
 		md5sum, err := fileMD5(path)
 		if err != nil {
-			return res, err
+			return nil, err
 		}
 		ext := strings.ToLower(filepath.Ext(path))
 		key := fmt.Sprintf("media/%s%s", md5sum, ext)
 		contentType := mime.TypeByExtension(ext)
 		if err := store.UploadFile(ctx, key, path, contentType); err != nil {
-			return res, err
+			return nil, err
 		}
-		assignMediaPath(&res, mediaType, strings.TrimPrefix(key, "media/"))
+		result[mediaType] = strings.TrimPrefix(key, "media/")
 	}
-	return res, nil
+	return result, nil
 }
 
 func (c *UploadCommand) pickMediaSource(categoryPath, defaultDir string, gameDef metadata.Game, mediaType, baseName string) (string, error) {
@@ -286,14 +259,14 @@ func (c *UploadCommand) pickMediaSource(categoryPath, defaultDir string, gameDef
 	if defaultDir == "" {
 		return "", nil
 	}
-	return c.firstFileWithPrefix(defaultDir, baseName)
+	return firstFileWithPrefix(defaultDir, baseName)
 }
 
 func (c *UploadCommand) assetPathFromMetadata(categoryPath string, gameDef metadata.Game, mediaType string) string {
 	if len(gameDef.Assets) == 0 {
 		return ""
 	}
-	aliases := mediaAssetKeys[mediaType]
+	aliases := mediaAssetAliases[mediaType]
 	for _, alias := range aliases {
 		if val, ok := gameDef.Assets[alias]; ok {
 			trimmed := strings.TrimSpace(val)
@@ -310,27 +283,7 @@ func (c *UploadCommand) assetPathFromMetadata(categoryPath string, gameDef metad
 	return ""
 }
 
-func assignMediaPath(media *Media, mediaType, path string) {
-	switch mediaType {
-	case "boxart":
-		media.Boxart = path
-	case "boxfront":
-		media.BoxFront = path
-	case "screenshot":
-		media.Screenshot = path
-	case "video":
-		media.Video = path
-	case "logo":
-		media.Logo = path
-	}
-}
-
-// PostRun performs any necessary cleanup after execution.
-func (c *UploadCommand) PostRun(ctx context.Context) error {
-	return nil
-}
-
-func (c *UploadCommand) firstFileWithPrefix(dir, prefix string) (string, error) {
+func firstFileWithPrefix(dir, prefix string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
