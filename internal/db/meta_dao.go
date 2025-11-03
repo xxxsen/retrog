@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"retrog/internal/model"
@@ -51,84 +52,48 @@ func (dao *MetaDAO) Upsert(ctx context.Context, records map[string]model.Entry) 
 		batchKeys := keys[start:end]
 
 		err = dao.db.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
-			existing := make(map[string]struct{})
-			where := map[string]interface{}{"rom_hash in": batchKeys}
-			selectSQL, args, err := builder.BuildSelect(metaTableName, where, []string{"rom_hash"})
-			if err != nil {
-				return err
-			}
-			rows, err := tx.QueryContext(ctx, selectSQL, args...)
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				var hash string
-				if err := rows.Scan(&hash); err != nil {
-					rows.Close()
-					return err
-				}
-				existing[hash] = struct{}{}
-			}
-			rows.Close()
-
-			now := time.Now().Unix()
-			insertPayload := make([]map[string]interface{}, 0)
-			updateQueue := make([]struct {
-				SQL  string
-				Args []interface{}
-			}, 0)
-
 			for _, hash := range batchKeys {
 				record := records[hash]
 				extJSON, err := record.MarshalExtInfo()
 				if err != nil {
 					return err
 				}
-				if _, ok := existing[hash]; !ok {
-					insertPayload = append(insertPayload, map[string]interface{}{
-						"rom_hash":    hash,
-						"rom_name":    record.Name,
-						"rom_desc":    record.Desc,
-						"rom_size":    record.Size,
-						"create_time": now,
-						"update_time": now,
-						"ext_info":    extJSON,
-					})
-					continue
-				}
-
-				updateSQL, updateArgs, err := builder.BuildUpdate(metaTableName, map[string]interface{}{"rom_hash": hash}, map[string]interface{}{
+				now := time.Now().Unix()
+				insertPayload := []map[string]interface{}{{
+					"rom_hash":    hash,
 					"rom_name":    record.Name,
 					"rom_desc":    record.Desc,
 					"rom_size":    record.Size,
+					"create_time": now,
 					"update_time": now,
 					"ext_info":    extJSON,
-				})
-				if err != nil {
-					return err
-				}
-				updateQueue = append(updateQueue, struct {
-					SQL  string
-					Args []interface{}
-				}{SQL: updateSQL, Args: updateArgs})
-			}
-
-			if len(insertPayload) > 0 {
+				}}
 				insertSQL, insertArgs, err := builder.BuildInsert(metaTableName, insertPayload)
 				if err != nil {
 					return err
 				}
 				if _, err := tx.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
-					return err
+					if !isUniqueConstraintError(err) {
+						return err
+					}
+					updateSQL, updateArgs, err := builder.BuildUpdate(metaTableName, map[string]interface{}{"rom_hash": hash}, map[string]interface{}{
+						"rom_name":    record.Name,
+						"rom_desc":    record.Desc,
+						"rom_size":    record.Size,
+						"update_time": now,
+						"ext_info":    extJSON,
+					})
+					if err != nil {
+						return err
+					}
+					if _, err := tx.ExecContext(ctx, updateSQL, updateArgs...); err != nil {
+						return err
+					}
+					updated++
+					continue
 				}
-				inserted += len(insertPayload)
-			}
 
-			for _, upd := range updateQueue {
-				if _, err := tx.ExecContext(ctx, upd.SQL, upd.Args...); err != nil {
-					return err
-				}
-				updated++
+				inserted++
 			}
 			return nil
 		})
@@ -186,4 +151,11 @@ func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[str
 	}
 
 	return result, missing, rows.Err()
+}
+
+func isUniqueConstraintError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
 }
