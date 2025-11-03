@@ -15,6 +15,7 @@ import (
 	"retrog/internal/config"
 	"retrog/internal/storage"
 
+	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
@@ -30,26 +31,81 @@ type EnsureOptions struct {
 
 // EnsureCommand encapsulates ensure execution state.
 type EnsureCommand struct {
-	cfg      *config.Config
-	metaPath string
-	opts     EnsureOptions
+	cfg           *config.Config
+	metaPath      string
+	category      string
+	targetDir     string
+	dataSelection string
+	unzip         bool
+	opts          EnsureOptions
 }
 
 // NewEnsureCommand creates a new ensure command instance.
-func NewEnsureCommand(cfg *config.Config, metaPath string, opts EnsureOptions) *EnsureCommand {
-	return &EnsureCommand{cfg: cfg, metaPath: metaPath, opts: opts}
+func NewEnsureCommand(cfg *config.Config) *EnsureCommand {
+	return &EnsureCommand{cfg: cfg}
+}
+
+// SetConfig injects the shared configuration for later use.
+func (c *EnsureCommand) SetConfig(cfg *config.Config) {
+	c.cfg = cfg
+}
+
+// Init registers CLI flags that affect the command.
+func (c *EnsureCommand) Init(fst *pflag.FlagSet) {
+	fst.StringVar(&c.metaPath, "meta", "", "Path to meta JSON produced by upload")
+	fst.StringVar(&c.category, "cat", "", "Category name to download")
+	fst.StringVar(&c.targetDir, "dir", "", "Destination directory to download into (must be empty or missing)")
+	fst.StringVar(&c.dataSelection, "data", "", "Comma-separated data types to download (rom, media)")
+	fst.BoolVar(&c.unzip, "unzip", false, "Unzip ROM archives that contain a single file")
+}
+
+// PreRun performs validation and object initialisation as needed.
+func (c *EnsureCommand) PreRun(ctx context.Context) error {
+	if c.cfg == nil {
+		return errors.New("ensure command missing configuration")
+	}
+	if c.metaPath == "" || c.category == "" || c.targetDir == "" {
+		return errors.New("ensure requires --meta, --cat, and --dir")
+	}
+
+	includeROM, includeMedia, err := parseEnsureDataSelection(c.dataSelection)
+	if err != nil {
+		return err
+	}
+
+	c.opts = EnsureOptions{
+		Category:     c.category,
+		TargetDir:    c.targetDir,
+		IncludeROM:   includeROM,
+		IncludeMedia: includeMedia,
+		Unzip:        c.unzip,
+	}
+
+	if storage.DefaultClient() == nil {
+		client, err := storage.NewS3Client(ctx, c.cfg.S3)
+		if err != nil {
+			return err
+		}
+		storage.SetDefaultClient(client)
+	}
+
+	logutil.GetLogger(ctx).Info("starting ensure",
+		zap.String("meta", c.metaPath),
+		zap.String("category", c.category),
+		zap.String("dir", c.targetDir),
+		zap.Bool("rom", c.opts.IncludeROM),
+		zap.Bool("media", c.opts.IncludeMedia),
+		zap.Bool("unzip", c.unzip),
+	)
+
+	return nil
 }
 
 // Run executes the ensure logic.
 func (c *EnsureCommand) Run(ctx context.Context) error {
 	store := storage.DefaultClient()
 	if store == nil {
-		var err error
-		store, err = storage.NewS3Client(ctx, c.cfg.S3)
-		if err != nil {
-			return err
-		}
-		storage.SetDefaultClient(store)
+		return errors.New("storage client not initialised")
 	}
 
 	return c.ensure(ctx, store)
@@ -334,5 +390,44 @@ func ensureCleanDir(path string) error {
 	if len(entries) > 0 {
 		return fmt.Errorf("target dir %s is not empty", path)
 	}
+	return nil
+}
+
+func parseEnsureDataSelection(input string) (rom bool, media bool, err error) {
+	if strings.TrimSpace(input) == "" {
+		return true, true, nil
+	}
+
+	rom = false
+	media = false
+
+	parts := strings.Split(input, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(strings.ToLower(part))
+		switch trimmed {
+		case "rom":
+			rom = true
+		case "media":
+			media = true
+		case "":
+			// ignore empty segments
+		default:
+			return false, false, fmt.Errorf("unknown data type %s", part)
+		}
+	}
+
+	if !rom && !media {
+		return true, true, nil
+	}
+
+	return rom, media, nil
+}
+
+// PostRun performs any necessary cleanup after execution.
+func (c *EnsureCommand) PostRun(ctx context.Context) error {
+	logutil.GetLogger(ctx).Info("ensure completed",
+		zap.String("category", c.category),
+		zap.String("dir", c.targetDir),
+	)
 	return nil
 }

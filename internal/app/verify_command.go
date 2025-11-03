@@ -2,10 +2,17 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"retrog/internal/config"
+
+	"github.com/spf13/pflag"
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
 )
 
 // VerifyResult captures duplicate and collision information discovered during verification.
@@ -35,8 +42,27 @@ type VerifyCommand struct {
 }
 
 // NewVerifyCommand constructs a verify command instance.
-func NewVerifyCommand(root string) *VerifyCommand {
-	return &VerifyCommand{rootDir: root}
+func NewVerifyCommand() *VerifyCommand {
+	return &VerifyCommand{}
+}
+
+// SetConfig is present for interface compatibility (verify has no config requirements).
+func (c *VerifyCommand) SetConfig(cfg *config.Config) {
+	// no-op; verify doesn't require configuration
+}
+
+// Init registers CLI flags that affect the command.
+func (c *VerifyCommand) Init(fst *pflag.FlagSet) {
+	fst.StringVar(&c.rootDir, "dir", "", "ROM root directory to verify")
+}
+
+// PreRun performs validation and setup.
+func (c *VerifyCommand) PreRun(ctx context.Context) error {
+	if c.rootDir == "" {
+		return errors.New("verify requires --dir")
+	}
+	logutil.GetLogger(ctx).Info("starting verify", zap.String("dir", c.rootDir))
+	return nil
 }
 
 // Run executes the verify command.
@@ -46,6 +72,19 @@ func (c *VerifyCommand) Run(ctx context.Context) error {
 		return err
 	}
 	c.result = res
+	return nil
+}
+
+// PostRun emits summary details after execution.
+func (c *VerifyCommand) PostRun(ctx context.Context) error {
+	if c.result != nil {
+		logutil.GetLogger(ctx).Info("verify summary",
+			zap.Int("rom_duplicates", len(c.result.RomDuplicates)),
+			zap.Int("rom_collisions", len(c.result.RomCollisions)),
+			zap.Int("media_duplicates", len(c.result.MediaDuplicates)),
+			zap.Int("media_collisions", len(c.result.MediaCollisions)),
+		)
+	}
 	return nil
 }
 

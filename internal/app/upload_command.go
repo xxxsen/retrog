@@ -14,6 +14,7 @@ import (
 	"retrog/internal/metadata"
 	"retrog/internal/storage"
 
+	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
@@ -36,8 +37,42 @@ type UploadCommand struct {
 }
 
 // NewUploadCommand constructs an executable upload command.
-func NewUploadCommand(cfg *config.Config, romDir, metaPath string) *UploadCommand {
-	return &UploadCommand{cfg: cfg, romDir: romDir, metaPath: metaPath}
+func NewUploadCommand(cfg *config.Config) *UploadCommand {
+	return &UploadCommand{cfg: cfg}
+}
+
+// SetConfig injects the shared configuration for later use.
+func (c *UploadCommand) SetConfig(cfg *config.Config) {
+	c.cfg = cfg
+}
+
+// Init registers CLI flags that affect the command.
+func (c *UploadCommand) Init(fst *pflag.FlagSet) {
+	fst.StringVar(&c.romDir, "dir", "", "ROM root directory")
+	fst.StringVar(&c.metaPath, "meta", "", "Path to write generated meta JSON")
+}
+
+// PreRun performs validation and object initialisation as needed.
+func (c *UploadCommand) PreRun(ctx context.Context) error {
+	if c.cfg == nil {
+		return errors.New("upload command missing configuration")
+	}
+	if c.romDir == "" || c.metaPath == "" {
+		return errors.New("upload requires --dir and --meta")
+	}
+	if storage.DefaultClient() == nil {
+		client, err := storage.NewS3Client(ctx, c.cfg.S3)
+		if err != nil {
+			return err
+		}
+		storage.SetDefaultClient(client)
+	}
+
+	logutil.GetLogger(ctx).Info("starting upload",
+		zap.String("dir", c.romDir),
+		zap.String("meta", c.metaPath),
+	)
+	return nil
 }
 
 // Run executes the upload command logic.
@@ -46,12 +81,7 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 
 	store := storage.DefaultClient()
 	if store == nil {
-		var err error
-		store, err = storage.NewS3Client(ctx, c.cfg.S3)
-		if err != nil {
-			return err
-		}
-		storage.SetDefaultClient(store)
+		return errors.New("storage client not initialised")
 	}
 
 	meta, err := c.buildMeta(ctx, store)
@@ -247,6 +277,11 @@ func assignMediaPath(media *Media, mediaType, path string) {
 	case "logo":
 		media.Logo = path
 	}
+}
+
+// PostRun performs any necessary cleanup after execution.
+func (c *UploadCommand) PostRun(ctx context.Context) error {
+	return nil
 }
 
 func firstFileWithPrefix(dir, prefix string) (string, error) {

@@ -2,46 +2,37 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/xxxsen/common/logutil"
-	"go.uber.org/zap"
 
 	"retrog/internal/app"
 )
 
 func newVerifyCommand() *cobra.Command {
-	var rootDir string
+	cmdRunner := app.NewVerifyCommand()
+	var runner app.IRunner = cmdRunner
 
 	cmd := &cobra.Command{
 		Use:   "verify",
 		Short: "Scan ROMs directory and report duplicate or colliding files",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if rootDir == "" {
-				return errors.New("verify requires --dir")
-			}
-
 			ctx := commandContext(cmd)
-			logutil.GetLogger(ctx).Info("starting verify", zap.String("dir", rootDir))
-			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-			defer cancel()
-
-			runner := app.NewVerifyCommand(rootDir)
-			var exec app.IRunner = runner
-			if err := exec.Run(ctx); err != nil {
+			if err := runner.PreRun(ctx); err != nil {
 				return err
 			}
 
-			result := runner.Result()
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+			defer cancel()
 
-			logutil.GetLogger(ctx).Info("verify summary",
-				zap.Int("rom_duplicates", len(result.RomDuplicates)),
-				zap.Int("rom_collisions", len(result.RomCollisions)),
-				zap.Int("media_duplicates", len(result.MediaDuplicates)),
-				zap.Int("media_collisions", len(result.MediaCollisions)),
-			)
+			if err := runner.Run(ctx); err != nil {
+				return err
+			}
+			if err := runner.PostRun(ctx); err != nil {
+				return err
+			}
+
+			result := cmdRunner.Result()
 
 			printGroups := func(title string, groups []app.DuplicateGroup) {
 				if len(groups) == 0 {
@@ -69,7 +60,7 @@ func newVerifyCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&rootDir, "dir", "", "ROM root directory to verify")
+	cmdRunner.Init(cmd.Flags())
 
 	return cmd
 }
