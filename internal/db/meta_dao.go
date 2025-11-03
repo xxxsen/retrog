@@ -3,18 +3,18 @@ package db
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"retrog/internal/model"
 
+	"github.com/didi/gendry/builder"
 	"github.com/xxxsen/common/database"
 )
 
 const (
-	selectMetaForUpsertSQL = `SELECT id FROM retro_game_meta_tab WHERE rom_hash = ?`
-	insertMetaSQL          = `INSERT INTO retro_game_meta_tab (rom_hash, rom_name, rom_desc, rom_size, create_time, update_time, ext_info) VALUES (?, ?, ?, ?, ?, ?, ?)`
-	updateMetaSQL          = `UPDATE retro_game_meta_tab SET rom_name = ?, rom_desc = ?, rom_size = ?, update_time = ?, ext_info = ? WHERE rom_hash = ?`
-	selectMetaByHashSQL    = `SELECT rom_name, rom_desc, rom_size, ext_info FROM retro_game_meta_tab WHERE rom_hash = ?`
+	metaTableName   = "retro_game_meta_tab"
+	upsertBatchSize = 50
 )
 
 // MetaDAO exposes helpers for reading and writing ROM metadata records.
@@ -33,79 +33,157 @@ func NewMetaDAO() (*MetaDAO, error) {
 
 // Upsert inserts or updates metadata records, returning the number of inserted and updated rows.
 func (dao *MetaDAO) Upsert(ctx context.Context, records map[string]model.Entry) (inserted int, updated int, err error) {
-	err = dao.db.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
-		now := time.Now().Unix()
-		for hash, record := range records {
-			extJSON, err := record.MarshalExtInfo()
-			if err != nil {
-				return err
-			}
+	if len(records) == 0 {
+		return 0, 0, nil
+	}
 
-			rows, err := tx.QueryContext(ctx, selectMetaForUpsertSQL, hash)
+	keys := make([]string, 0, len(records))
+	for hash := range records {
+		keys = append(keys, hash)
+	}
+	sort.Strings(keys)
+
+	for start := 0; start < len(keys); start += upsertBatchSize {
+		end := start + upsertBatchSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+		batchKeys := keys[start:end]
+
+		err = dao.db.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
+			existing := make(map[string]struct{})
+			where := map[string]interface{}{"rom_hash in": batchKeys}
+			selectSQL, args, err := builder.BuildSelect(metaTableName, where, []string{"rom_hash"})
 			if err != nil {
 				return err
 			}
-			var existingID int64
-			if rows.Next() {
-				if err := rows.Scan(&existingID); err != nil {
+			rows, err := tx.QueryContext(ctx, selectSQL, args...)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var hash string
+				if err := rows.Scan(&hash); err != nil {
 					rows.Close()
 					return err
 				}
+				existing[hash] = struct{}{}
 			}
 			rows.Close()
 
-			if existingID == 0 {
-				if _, err := tx.ExecContext(ctx, insertMetaSQL, hash, record.Name, record.Desc, record.Size, now, now, extJSON); err != nil {
+			now := time.Now().Unix()
+			insertPayload := make([]map[string]interface{}, 0)
+			updateQueue := make([]struct {
+				SQL  string
+				Args []interface{}
+			}, 0)
+
+			for _, hash := range batchKeys {
+				record := records[hash]
+				extJSON, err := record.MarshalExtInfo()
+				if err != nil {
 					return err
 				}
-				inserted++
-			} else {
-				if _, err := tx.ExecContext(ctx, updateMetaSQL, record.Name, record.Desc, record.Size, now, extJSON, hash); err != nil {
+				if _, ok := existing[hash]; !ok {
+					insertPayload = append(insertPayload, map[string]interface{}{
+						"rom_hash":    hash,
+						"rom_name":    record.Name,
+						"rom_desc":    record.Desc,
+						"rom_size":    record.Size,
+						"create_time": now,
+						"update_time": now,
+						"ext_info":    extJSON,
+					})
+					continue
+				}
+
+				updateSQL, updateArgs, err := builder.BuildUpdate(metaTableName, map[string]interface{}{"rom_hash": hash}, map[string]interface{}{
+					"rom_name":    record.Name,
+					"rom_desc":    record.Desc,
+					"rom_size":    record.Size,
+					"update_time": now,
+					"ext_info":    extJSON,
+				})
+				if err != nil {
+					return err
+				}
+				updateQueue = append(updateQueue, struct {
+					SQL  string
+					Args []interface{}
+				}{SQL: updateSQL, Args: updateArgs})
+			}
+
+			if len(insertPayload) > 0 {
+				insertSQL, insertArgs, err := builder.BuildInsert(metaTableName, insertPayload)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
+					return err
+				}
+				inserted += len(insertPayload)
+			}
+
+			for _, upd := range updateQueue {
+				if _, err := tx.ExecContext(ctx, upd.SQL, upd.Args...); err != nil {
 					return err
 				}
 				updated++
 			}
+			return nil
+		})
+		if err != nil {
+			return inserted, updated, err
 		}
-		return nil
-	})
-	return inserted, updated, err
+	}
+
+	return inserted, updated, nil
 }
 
 // FetchByHashes returns metadata entries for the requested ROM hashes.
 func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[string]model.Entry, []string, error) {
 	result := make(map[string]model.Entry, len(hashes))
 	missing := make([]string, 0)
-	for _, hash := range hashes {
-		rows, err := dao.db.QueryContext(ctx, selectMetaByHashSQL, hash)
-		if err != nil {
-			return nil, nil, err
-		}
+	if len(hashes) == 0 {
+		return result, missing, nil
+	}
+
+	where := map[string]interface{}{"rom_hash in": hashes}
+	selectSQL, args, err := builder.BuildSelect(metaTableName, where, []string{"rom_hash", "rom_name", "rom_desc", "rom_size", "ext_info"})
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := dao.db.QueryContext(ctx, selectSQL, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	found := make(map[string]struct{})
+	for rows.Next() {
 		var (
+			hash    string
 			name    string
 			desc    string
 			size    int64
 			extInfo string
 		)
-		found := false
-		if rows.Next() {
-			found = true
-			if err := rows.Scan(&name, &desc, &size, &extInfo); err != nil {
-				rows.Close()
-				return nil, nil, err
-			}
+		if err := rows.Scan(&hash, &name, &desc, &size, &extInfo); err != nil {
+			return nil, nil, err
 		}
-		rows.Close()
-
-		if !found {
-			missing = append(missing, hash)
-			continue
-		}
-
 		entry, err := model.FromRecord(name, desc, size, extInfo)
 		if err != nil {
 			return nil, nil, err
 		}
 		result[hash] = entry
+		found[hash] = struct{}{}
 	}
-	return result, missing, nil
+
+	for _, hash := range hashes {
+		if _, ok := found[hash]; !ok {
+			missing = append(missing, hash)
+		}
+	}
+
+	return result, missing, rows.Err()
 }
