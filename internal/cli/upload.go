@@ -10,7 +10,11 @@ import (
 )
 
 func newUploadCommand() *cobra.Command {
-	cmdRunner := app.NewUploadCommand(nil)
+	runnerIface, err := app.ResolveRunner("upload")
+	if err != nil {
+		panic(err)
+	}
+	cmdRunner := runnerIface.(*app.UploadCommand)
 	var runner app.IRunner = cmdRunner
 
 	cmd := &cobra.Command{
@@ -18,12 +22,9 @@ func newUploadCommand() *cobra.Command {
 		Short: "Upload ROMs and media to object storage and emit metadata",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := commandContext(cmd)
-			cfg, err := getConfig(cmd)
-			if err != nil {
+			if _, err := getConfig(cmd); err != nil {
 				return err
 			}
-
-			cmdRunner.SetConfig(cfg)
 
 			if err := runner.PreRun(ctx); err != nil {
 				return err

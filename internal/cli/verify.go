@@ -10,7 +10,11 @@ import (
 )
 
 func newVerifyCommand() *cobra.Command {
-	cmdRunner := app.NewVerifyCommand()
+	runnerIface, err := app.ResolveRunner("verify")
+	if err != nil {
+		panic(err)
+	}
+	cmdRunner := runnerIface.(*app.VerifyCommand)
 	var runner app.IRunner = cmdRunner
 
 	cmd := &cobra.Command{

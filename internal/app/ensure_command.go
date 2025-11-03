@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"strings"
 
-	"retrog/internal/config"
 	"retrog/internal/storage"
 
 	"github.com/spf13/pflag"
@@ -31,23 +30,22 @@ type EnsureOptions struct {
 
 // EnsureCommand encapsulates ensure execution state.
 type EnsureCommand struct {
-	cfg           *config.Config
 	metaPath      string
 	category      string
 	targetDir     string
 	dataSelection string
 	unzip         bool
 	opts          EnsureOptions
+	romBucket     string
+	mediaBucket   string
 }
+
+// Name returns the command identifier.
+func (c *EnsureCommand) Name() string { return "ensure" }
 
 // NewEnsureCommand creates a new ensure command instance.
-func NewEnsureCommand(cfg *config.Config) *EnsureCommand {
-	return &EnsureCommand{cfg: cfg}
-}
-
-// SetConfig injects the shared configuration for later use.
-func (c *EnsureCommand) SetConfig(cfg *config.Config) {
-	c.cfg = cfg
+func NewEnsureCommand() *EnsureCommand {
+	return &EnsureCommand{}
 }
 
 // Init registers CLI flags that affect the command.
@@ -61,9 +59,6 @@ func (c *EnsureCommand) Init(fst *pflag.FlagSet) {
 
 // PreRun performs validation and object initialisation as needed.
 func (c *EnsureCommand) PreRun(ctx context.Context) error {
-	if c.cfg == nil {
-		return errors.New("ensure command missing configuration")
-	}
 	if c.metaPath == "" || c.category == "" || c.targetDir == "" {
 		return errors.New("ensure requires --meta, --cat, and --dir")
 	}
@@ -81,13 +76,23 @@ func (c *EnsureCommand) PreRun(ctx context.Context) error {
 		Unzip:        c.unzip,
 	}
 
-	if storage.DefaultClient() == nil {
-		client, err := storage.NewS3Client(ctx, c.cfg.S3)
-		if err != nil {
-			return err
-		}
-		storage.SetDefaultClient(client)
+	if _, err := storage.EnsureDefaultClient(ctx); err != nil {
+		return err
 	}
+
+	cfg, ok := storage.DefaultS3Config()
+	if !ok {
+		return errors.New("default s3 configuration not initialised")
+	}
+	bucket := cfg.RomBucket
+	if bucket == "" {
+		bucket = cfg.MediaBucket
+	}
+	if bucket == "" {
+		return errors.New("s3 bucket not configured")
+	}
+	c.romBucket = bucket
+	c.mediaBucket = bucket
 
 	logutil.GetLogger(ctx).Info("starting ensure",
 		zap.String("meta", c.metaPath),
@@ -173,10 +178,10 @@ func (c *EnsureCommand) ensure(ctx context.Context, store storage.Client) error 
 func (c *EnsureCommand) downloadROMFiles(ctx context.Context, store storage.Client, game Game, gameDir string, unzip bool) error {
 	logger := logutil.GetLogger(ctx)
 	for idx, file := range game.Files {
-		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
+		key := fmt.Sprintf("rom/%s%s", file.Hash, file.Ext)
 		destName := buildFileNameFromMeta(game, file, idx)
 		destPath := filepath.Join(gameDir, destName)
-		if err := store.DownloadToFile(ctx, c.cfg.S3.RomBucket, key, destPath); err != nil {
+		if err := store.DownloadToFile(ctx, c.romBucket, key, destPath); err != nil {
 			return err
 		}
 
@@ -337,12 +342,8 @@ func (c *EnsureCommand) downloadMedia(ctx context.Context, store storage.Client,
 		if item.src == "" {
 			continue
 		}
-		bucket, key, err := parseS3Path(item.src)
-		if err != nil {
-			return err
-		}
-		dest := filepath.Join(mediaDir, item.name+filepath.Ext(key))
-		if err := store.DownloadToFile(ctx, bucket, key, dest); err != nil {
+		dest := filepath.Join(mediaDir, item.name+filepath.Ext(item.src))
+		if err := store.DownloadToFile(ctx, c.mediaBucket, item.src, dest); err != nil {
 			return err
 		}
 	}
@@ -430,4 +431,8 @@ func (c *EnsureCommand) PostRun(ctx context.Context) error {
 		zap.String("dir", c.targetDir),
 	)
 	return nil
+}
+
+func init() {
+	RegisterRunner("ensure", func() IRunner { return NewEnsureCommand() })
 }

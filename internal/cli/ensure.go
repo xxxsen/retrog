@@ -10,7 +10,11 @@ import (
 )
 
 func newEnsureCommand() *cobra.Command {
-	cmdRunner := app.NewEnsureCommand(nil)
+	runnerIface, err := app.ResolveRunner("ensure")
+	if err != nil {
+		panic(err)
+	}
+	cmdRunner := runnerIface.(*app.EnsureCommand)
 	var runner app.IRunner = cmdRunner
 
 	cmd := &cobra.Command{
@@ -18,12 +22,9 @@ func newEnsureCommand() *cobra.Command {
 		Short: "Download ROMs and media for a category based on generated meta JSON",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := commandContext(cmd)
-			cfg, err := getConfig(cmd)
-			if err != nil {
+			if _, err := getConfig(cmd); err != nil {
 				return err
 			}
-
-			cmdRunner.SetConfig(cfg)
 			if err := runner.PreRun(ctx); err != nil {
 				return err
 			}

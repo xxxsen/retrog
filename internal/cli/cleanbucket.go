@@ -10,20 +10,22 @@ import (
 )
 
 func newCleanBucketCommand() *cobra.Command {
-	cmdRunner := app.NewCleanBucketCommand(nil)
+	runnerIface, err := app.ResolveRunner("clean-bucket")
+	if err != nil {
+		panic(err)
+	}
+	cmdRunner := runnerIface.(*app.CleanBucketCommand)
 	var runner app.IRunner = cmdRunner
 
 	cmd := &cobra.Command{
 		Use:   "clean-bucket",
 		Short: "Remove all objects from the configured ROM and media buckets",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := getConfig(cmd)
-			if err != nil {
+			if _, err := getConfig(cmd); err != nil {
 				return err
 			}
 
 			ctx := commandContext(cmd)
-			cmdRunner.SetConfig(cfg)
 			if err := runner.PreRun(ctx); err != nil {
 				return err
 			}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"retrog/internal/config"
 	"retrog/internal/storage"
 
 	"github.com/spf13/pflag"
@@ -14,19 +13,18 @@ import (
 
 // CleanBucketCommand empties configured buckets.
 type CleanBucketCommand struct {
-	cfg   *config.Config
-	force bool
+	force       bool
+	romBucket   string
+	mediaBucket string
 }
 
 // NewCleanBucketCommand builds the clean bucket command.
-func NewCleanBucketCommand(cfg *config.Config) *CleanBucketCommand {
-	return &CleanBucketCommand{cfg: cfg}
+func NewCleanBucketCommand() *CleanBucketCommand {
+	return &CleanBucketCommand{}
 }
 
-// SetConfig injects the shared configuration for later use.
-func (c *CleanBucketCommand) SetConfig(cfg *config.Config) {
-	c.cfg = cfg
-}
+// Name returns the command identifier.
+func (c *CleanBucketCommand) Name() string { return "clean-bucket" }
 
 // Init registers CLI flags that affect the command.
 func (c *CleanBucketCommand) Init(fst *pflag.FlagSet) {
@@ -35,24 +33,31 @@ func (c *CleanBucketCommand) Init(fst *pflag.FlagSet) {
 
 // PreRun performs validation and initialisation.
 func (c *CleanBucketCommand) PreRun(ctx context.Context) error {
-	if c.cfg == nil {
-		return errors.New("clean-bucket command missing configuration")
-	}
 	if !c.force {
 		return errors.New("refusing to clean buckets without --force confirmation")
 	}
 
-	if storage.DefaultClient() == nil {
-		client, err := storage.NewS3Client(ctx, c.cfg.S3)
-		if err != nil {
-			return err
-		}
-		storage.SetDefaultClient(client)
+	cfg, ok := storage.DefaultS3Config()
+	if !ok {
+		return errors.New("default s3 configuration not initialised")
+	}
+	bucket := cfg.RomBucket
+	if bucket == "" {
+		bucket = cfg.MediaBucket
+	}
+	if bucket == "" {
+		return errors.New("s3 bucket not configured")
+	}
+	c.romBucket = bucket
+	c.mediaBucket = bucket
+
+	if _, err := storage.EnsureDefaultClient(ctx); err != nil {
+		return err
 	}
 
 	logutil.GetLogger(ctx).Info("clean bucket begin",
-		zap.String("rom_bucket", c.cfg.S3.RomBucket),
-		zap.String("media_bucket", c.cfg.S3.MediaBucket),
+		zap.String("rom_bucket", c.romBucket),
+		zap.String("media_bucket", c.mediaBucket),
 	)
 	return nil
 }
@@ -64,10 +69,10 @@ func (c *CleanBucketCommand) Run(ctx context.Context) error {
 		return errors.New("storage client not initialised")
 	}
 
-	if err := store.ClearBucket(ctx, c.cfg.S3.RomBucket); err != nil {
+	if err := store.ClearBucket(ctx, c.romBucket); err != nil {
 		return err
 	}
-	if err := store.ClearBucket(ctx, c.cfg.S3.MediaBucket); err != nil {
+	if err := store.ClearBucket(ctx, c.mediaBucket); err != nil {
 		return err
 	}
 	return nil
@@ -76,8 +81,12 @@ func (c *CleanBucketCommand) Run(ctx context.Context) error {
 // PostRun performs any cleanup after execution.
 func (c *CleanBucketCommand) PostRun(ctx context.Context) error {
 	logutil.GetLogger(ctx).Info("clean bucket finished",
-		zap.String("rom_bucket", c.cfg.S3.RomBucket),
-		zap.String("media_bucket", c.cfg.S3.MediaBucket),
+		zap.String("rom_bucket", c.romBucket),
+		zap.String("media_bucket", c.mediaBucket),
 	)
 	return nil
+}
+
+func init() {
+	RegisterRunner("clean-bucket", func() IRunner { return NewCleanBucketCommand() })
 }

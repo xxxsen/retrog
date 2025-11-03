@@ -49,25 +49,6 @@ func fileSHA1(path string) (string, error) {
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func s3Path(bucket, key string) string {
-	return fmt.Sprintf("s3://%s/%s", bucket, key)
-}
-
-func parseS3Path(path string) (string, string, error) {
-	if path == "" {
-		return "", "", fmt.Errorf("empty s3 path")
-	}
-	if !strings.HasPrefix(path, "s3://") {
-		return "", "", fmt.Errorf("invalid s3 path %s", path)
-	}
-	trimmed := strings.TrimPrefix(path, "s3://")
-	parts := strings.SplitN(trimmed, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("invalid s3 path %s", path)
-	}
-	return parts[0], parts[1], nil
-}
-
 func sanitizeName(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {

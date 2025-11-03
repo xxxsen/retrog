@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"retrog/internal/config"
-
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
@@ -41,14 +39,12 @@ type VerifyCommand struct {
 	result  *VerifyResult
 }
 
+// Name returns the command identifier.
+func (c *VerifyCommand) Name() string { return "verify" }
+
 // NewVerifyCommand constructs a verify command instance.
 func NewVerifyCommand() *VerifyCommand {
 	return &VerifyCommand{}
-}
-
-// SetConfig is present for interface compatibility (verify has no config requirements).
-func (c *VerifyCommand) SetConfig(cfg *config.Config) {
-	// no-op; verify doesn't require configuration
 }
 
 // Init registers CLI flags that affect the command.
@@ -91,6 +87,10 @@ func (c *VerifyCommand) PostRun(ctx context.Context) error {
 // Result returns the verification outcome gathered during Run.
 func (c *VerifyCommand) Result() *VerifyResult {
 	return c.result
+}
+
+func init() {
+	RegisterRunner("verify", func() IRunner { return NewVerifyCommand() })
 }
 
 func verify(ctx context.Context, root string) (*VerifyResult, error) {

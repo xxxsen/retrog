@@ -71,11 +71,10 @@ func ensureConfig(cmd *cobra.Command) (*config.Config, error) {
 	}
 
 	ctx := commandContext(cmd)
-	client, err := storage.NewS3Client(ctx, cfg.S3)
-	if err != nil {
+	storage.SetDefaultS3Config(cfg.S3)
+	if _, err := storage.EnsureDefaultClient(ctx); err != nil {
 		return nil, err
 	}
-	storage.SetDefaultClient(client)
 
 	return cfg, nil
 }
