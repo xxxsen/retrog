@@ -1,4 +1,4 @@
-package ensure
+package cli
 
 import (
 	"context"
@@ -12,12 +12,9 @@ import (
 	"go.uber.org/zap"
 
 	"retrog/internal/app"
-	"retrog/internal/cli/common"
-	"retrog/internal/storage"
 )
 
-// NewCommand constructs the cobra command responsible for downloading assets.
-func NewCommand() *cobra.Command {
+func newEnsureCommand() *cobra.Command {
 	var metaPath string
 	var category string
 	var targetDir string
@@ -37,7 +34,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 
-			ctx := cmdContext(cmd)
+			ctx := commandContext(cmd)
 			logutil.GetLogger(ctx).Info("starting ensure",
 				zap.String("meta", metaPath),
 				zap.String("category", category),
@@ -47,18 +44,11 @@ func NewCommand() *cobra.Command {
 				zap.Bool("unzip", unzip),
 			)
 
-			cfgPath, _ := cmd.Root().PersistentFlags().GetString(common.ConfigFlag)
-			cfg, err := common.LoadConfig(cfgPath)
+			cfgPath, _ := cmd.Root().PersistentFlags().GetString(ConfigFlag)
+			cfg, err := loadConfig(cfgPath)
 			if err != nil {
 				return err
 			}
-
-			store, err := storage.NewS3Client(cmd.Context(), cfg.S3)
-			if err != nil {
-				return err
-			}
-
-			ensurer := app.NewEnsurer(store, cfg)
 
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
@@ -71,7 +61,8 @@ func NewCommand() *cobra.Command {
 				Unzip:        unzip,
 			}
 
-			if err := ensurer.Ensure(ctx, metaPath, opts); err != nil {
+			var runner app.IRunner = app.NewEnsureCommand(cfg, metaPath, opts)
+			if err := runner.Run(ctx); err != nil {
 				return err
 			}
 
@@ -91,13 +82,6 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&unzip, "unzip", false, "Unzip ROM archives that contain a single file")
 
 	return cmd
-}
-
-func cmdContext(cmd *cobra.Command) context.Context {
-	if ctx := cmd.Context(); ctx != nil {
-		return ctx
-	}
-	return context.Background()
 }
 
 func parseDataSelection(input string) (rom bool, media bool, err error) {

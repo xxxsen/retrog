@@ -1,4 +1,4 @@
-package verify
+package cli
 
 import (
 	"context"
@@ -12,8 +12,7 @@ import (
 	"retrog/internal/app"
 )
 
-// NewCommand constructs the verify command, which identifies duplicate ROM/media assets.
-func NewCommand() *cobra.Command {
+func newVerifyCommand() *cobra.Command {
 	var rootDir string
 
 	cmd := &cobra.Command{
@@ -24,15 +23,18 @@ func NewCommand() *cobra.Command {
 				return errors.New("verify requires --dir")
 			}
 
-			ctx := cmdContext(cmd)
+			ctx := commandContext(cmd)
 			logutil.GetLogger(ctx).Info("starting verify", zap.String("dir", rootDir))
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
 
-			result, err := app.Verify(ctx, rootDir)
-			if err != nil {
+			runner := app.NewVerifyCommand(rootDir)
+			var exec app.IRunner = runner
+			if err := exec.Run(ctx); err != nil {
 				return err
 			}
+
+			result := runner.Result()
 
 			logutil.GetLogger(ctx).Info("verify summary",
 				zap.Int("rom_duplicates", len(result.RomDuplicates)),
@@ -70,11 +72,4 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().StringVar(&rootDir, "dir", "", "ROM root directory to verify")
 
 	return cmd
-}
-
-func cmdContext(cmd *cobra.Command) context.Context {
-	if ctx := cmd.Context(); ctx != nil {
-		return ctx
-	}
-	return context.Background()
 }

@@ -1,14 +1,6 @@
 package cli
 
-import (
-	"github.com/spf13/cobra"
-
-	"retrog/internal/cli/cleanbucket"
-	"retrog/internal/cli/common"
-	"retrog/internal/cli/ensure"
-	"retrog/internal/cli/upload"
-	"retrog/internal/cli/verify"
-)
+import "github.com/spf13/cobra"
 
 var rootCmd = &cobra.Command{
 	Use:   "retrog",
@@ -21,9 +13,9 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().String(common.ConfigFlag, "", "Path to configuration file")
-	rootCmd.AddCommand(upload.NewCommand())
-	rootCmd.AddCommand(ensure.NewCommand())
-	rootCmd.AddCommand(cleanbucket.NewCommand())
-	rootCmd.AddCommand(verify.NewCommand())
+	rootCmd.PersistentFlags().String(ConfigFlag, "", "Path to configuration file")
+	rootCmd.AddCommand(newUploadCommand())
+	rootCmd.AddCommand(newEnsureCommand())
+	rootCmd.AddCommand(newCleanBucketCommand())
+	rootCmd.AddCommand(newVerifyCommand())
 }

@@ -1,4 +1,4 @@
-package common
+package cli
 
 import (
 	"os"
@@ -15,8 +15,7 @@ const (
 	systemConfigPath  = "/etc/retrog.json"
 )
 
-// LoadConfig resolves the configuration file respecting precedence rules.
-func LoadConfig(explicit string) (*config.Config, error) {
+func loadConfig(explicit string) (*config.Config, error) {
 	searchPaths := make([]string, 0, 3)
 	if explicit != "" {
 		searchPaths = append(searchPaths, explicit)

@@ -1,4 +1,4 @@
-package cleanbucket
+package cli
 
 import (
 	"context"
@@ -9,12 +9,10 @@ import (
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 
-	"retrog/internal/cli/common"
-	"retrog/internal/storage"
+	"retrog/internal/app"
 )
 
-// NewCommand returns a cobra command that clears configured buckets.
-func NewCommand() *cobra.Command {
+func newCleanBucketCommand() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
@@ -25,30 +23,24 @@ func NewCommand() *cobra.Command {
 				return errors.New("refusing to clean buckets without --force confirmation")
 			}
 
-			cfgPath, _ := cmd.Root().PersistentFlags().GetString(common.ConfigFlag)
-			cfg, err := common.LoadConfig(cfgPath)
+			cfgPath, _ := cmd.Root().PersistentFlags().GetString(ConfigFlag)
+			cfg, err := loadConfig(cfgPath)
 			if err != nil {
 				return err
 			}
 
-			store, err := storage.NewS3Client(cmd.Context(), cfg.S3)
-			if err != nil {
-				return err
-			}
-
-			ctx := cmdContext(cmd)
-			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			defer cancel()
-
+			ctx := commandContext(cmd)
 			logutil.GetLogger(ctx).Info("clean bucket begin",
 				zap.String("rom_bucket", cfg.S3.RomBucket),
 				zap.String("media_bucket", cfg.S3.MediaBucket),
 			)
 
-			if err := store.ClearBucket(ctx, cfg.S3.RomBucket); err != nil {
-				return err
-			}
-			if err := store.ClearBucket(ctx, cfg.S3.MediaBucket); err != nil {
+			var runner app.IRunner = app.NewCleanBucketCommand(cfg)
+
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer cancel()
+
+			if err := runner.Run(ctx); err != nil {
 				return err
 			}
 
@@ -65,11 +57,4 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Confirm the cleanup operation")
 
 	return cmd
-}
-
-func cmdContext(cmd *cobra.Command) context.Context {
-	if ctx := cmd.Context(); ctx != nil {
-		return ctx
-	}
-	return context.Background()
 }
