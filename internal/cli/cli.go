@@ -3,10 +3,10 @@ package cli
 import (
 	"context"
 
-	"retrog/internal/app"
-	"retrog/internal/config"
-	appdb "retrog/internal/db"
-	"retrog/internal/storage"
+	"github.com/xxxsen/retrog/internal/app"
+	"github.com/xxxsen/retrog/internal/config"
+	appdb "github.com/xxxsen/retrog/internal/db"
+	"github.com/xxxsen/retrog/internal/storage"
 
 	"github.com/spf13/cobra"
 	"github.com/xxxsen/common/database"

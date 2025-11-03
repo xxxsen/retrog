@@ -1,4 +1,4 @@
-module retrog
+module github.com/xxxsen/retrog
 
 go 1.24.0
 

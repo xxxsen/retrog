@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"retrog/internal/config"
+	"github.com/xxxsen/retrog/internal/config"
 )
 
 var defaultKeyList = []string{

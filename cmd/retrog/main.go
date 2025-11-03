@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"retrog/internal/cli"
+	"github.com/xxxsen/retrog/internal/cli"
 
 	"github.com/xxxsen/common/logger"
 	"github.com/xxxsen/common/logutil"

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	appdb "retrog/internal/db"
-	"retrog/internal/model"
+	appdb "github.com/xxxsen/retrog/internal/db"
+	"github.com/xxxsen/retrog/internal/model"
 
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"

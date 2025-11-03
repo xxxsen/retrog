@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 
-	appconfig "retrog/internal/config"
+	appconfig "github.com/xxxsen/retrog/internal/config"
 )
 
 // Client abstracts the subset of S3 operations the tool needs.

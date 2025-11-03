@@ -16,7 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
-	appconfig "retrog/internal/config"
+	appconfig "github.com/xxxsen/retrog/internal/config"
 )
 
 type s3Client struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"retrog/internal/model"
+	"github.com/xxxsen/retrog/internal/model"
 
 	"github.com/didi/gendry/builder"
 	"github.com/xxxsen/common/database"

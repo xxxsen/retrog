@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"retrog/internal/storage"
+	"github.com/xxxsen/retrog/internal/storage"
 
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"

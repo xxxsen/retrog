@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 
-	appdb "retrog/internal/db"
-	"retrog/internal/metadata"
-	"retrog/internal/model"
-	"retrog/internal/storage"
+	appdb "github.com/xxxsen/retrog/internal/db"
+	"github.com/xxxsen/retrog/internal/metadata"
+	"github.com/xxxsen/retrog/internal/model"
+	"github.com/xxxsen/retrog/internal/storage"
 
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
