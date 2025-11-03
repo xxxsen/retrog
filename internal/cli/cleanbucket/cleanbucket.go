@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
 
 	"retrog/internal/cli/common"
 	"retrog/internal/storage"
@@ -38,12 +40,22 @@ func NewCommand() *cobra.Command {
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer cancel()
 
+			logutil.GetLogger(ctx).Info("clean bucket begin",
+				zap.String("rom_bucket", cfg.S3.RomBucket),
+				zap.String("media_bucket", cfg.S3.MediaBucket),
+			)
+
 			if err := store.ClearBucket(ctx, cfg.S3.RomBucket); err != nil {
 				return err
 			}
 			if err := store.ClearBucket(ctx, cfg.S3.MediaBucket); err != nil {
 				return err
 			}
+
+			logutil.GetLogger(ctx).Info("clean bucket finished",
+				zap.String("rom_bucket", cfg.S3.RomBucket),
+				zap.String("media_bucket", cfg.S3.MediaBucket),
+			)
 
 			cmd.Println("Buckets cleaned successfully")
 			return nil

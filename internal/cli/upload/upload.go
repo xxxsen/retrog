@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
 
 	"retrog/internal/app"
 	"retrog/internal/cli/common"
@@ -28,6 +30,12 @@ func NewCommand() *cobra.Command {
 				return errors.New("upload requires --dir and --meta")
 			}
 
+			ctx := cmdContext(cmd)
+			logutil.GetLogger(ctx).Info("starting upload",
+				zap.String("dir", romDir),
+				zap.String("meta", metaPath),
+			)
+
 			cfgPath, _ := cmd.Root().PersistentFlags().GetString(common.ConfigFlag)
 			cfg, err := common.LoadConfig(cfgPath)
 			if err != nil {
@@ -41,7 +49,6 @@ func NewCommand() *cobra.Command {
 
 			uploader := app.NewUploader(store, cfg)
 
-			ctx := cmdContext(cmd)
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
 
@@ -58,6 +65,11 @@ func NewCommand() *cobra.Command {
 			if err := os.WriteFile(metaPath, data, 0o644); err != nil {
 				return fmt.Errorf("write meta file: %w", err)
 			}
+
+			logutil.GetLogger(ctx).Info("upload completed",
+				zap.String("meta", metaPath),
+				zap.Int("categories", len(meta.Category)),
+			)
 
 			return nil
 		},

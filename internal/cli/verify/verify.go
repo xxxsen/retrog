@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
 
 	"retrog/internal/app"
 )
@@ -23,6 +25,7 @@ func NewCommand() *cobra.Command {
 			}
 
 			ctx := cmdContext(cmd)
+			logutil.GetLogger(ctx).Info("starting verify", zap.String("dir", rootDir))
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
 
@@ -30,6 +33,13 @@ func NewCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			logutil.GetLogger(ctx).Info("verify summary",
+				zap.Int("rom_duplicates", len(result.RomDuplicates)),
+				zap.Int("rom_collisions", len(result.RomCollisions)),
+				zap.Int("media_duplicates", len(result.MediaDuplicates)),
+				zap.Int("media_collisions", len(result.MediaCollisions)),
+			)
 
 			printGroups := func(title string, groups []app.DuplicateGroup) {
 				if len(groups) == 0 {

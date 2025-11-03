@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
+
 	"retrog/internal/config"
 	"retrog/internal/metadata"
 	"retrog/internal/storage"
@@ -37,6 +40,9 @@ func NewUploader(store storage.Client, cfg *config.Config) *Uploader {
 
 // Upload traverses the given rom root directory and uploads all categories.
 func (u *Uploader) Upload(ctx context.Context, romRoot string) (*Meta, error) {
+	logger := logutil.GetLogger(ctx)
+	logger.Info("scanning rom root", zap.String("root", romRoot))
+
 	rootEntries, err := os.ReadDir(romRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read rom root %s: %w", romRoot, err)
@@ -55,6 +61,11 @@ func (u *Uploader) Upload(ctx context.Context, romRoot string) (*Meta, error) {
 		}
 		if cat != nil {
 			result.Category = append(result.Category, *cat)
+			logger.Debug("category processed",
+				zap.String("path", categoryPath),
+				zap.String("name", cat.CatName),
+				zap.Int("games", len(cat.GameList)),
+			)
 		}
 	}
 
@@ -63,6 +74,9 @@ func (u *Uploader) Upload(ctx context.Context, romRoot string) (*Meta, error) {
 
 func (u *Uploader) processCategory(ctx context.Context, categoryPath string) (*Category, error) {
 	metaPath := filepath.Join(categoryPath, metadataFileName)
+	logger := logutil.GetLogger(ctx)
+	logger.Debug("processing category metadata", zap.String("meta", metaPath))
+
 	doc, err := metadata.Parse(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse metadata %s: %w", metaPath, err)
@@ -86,6 +100,11 @@ func (u *Uploader) processCategory(ctx context.Context, categoryPath string) (*C
 		}
 		cat.GameList = append(cat.GameList, *game)
 	}
+
+	logger.Debug("category games compiled",
+		zap.String("category", cat.CatName),
+		zap.Int("games", len(cat.GameList)),
+	)
 
 	return cat, nil
 }

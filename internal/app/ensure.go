@@ -67,7 +67,7 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 
 	for _, game := range cat.GameList {
 		if len(game.Files) == 0 {
-			logutil.GetLogger(ctx).Info("skip game", zap.String("game", game.Name))
+			logutil.GetLogger(ctx).Warn("skip game due to empty files", zap.String("game", game.Name))
 			continue
 		}
 
@@ -97,31 +97,39 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 }
 
 func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, gameDir string, unzip bool) error {
+	logger := logutil.GetLogger(ctx)
 	for idx, file := range game.Files {
 		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
 		destName := buildFileNameFromMeta(game, file, idx)
 		destPath := filepath.Join(gameDir, destName)
 		if err := e.store.DownloadToFile(ctx, e.cfg.S3.RomBucket, key, destPath); err != nil {
-			return err
-		}
+            return err
+        }
 
-		if file.Hash != "" {
-			sum, err := fileMD5(destPath)
-			if err != nil {
-				return err
-			}
-			if sum != file.Hash {
-				return fmt.Errorf("hash mismatch for %s (expected %s got %s)", destPath, file.Hash, sum)
-			}
-		}
+        if file.Hash != "" {
+            sum, err := fileMD5(destPath)
+            if err != nil {
+                return err
+            }
+            if sum != file.Hash {
+                return fmt.Errorf("hash mismatch for %s (expected %s got %s)", destPath, file.Hash, sum)
+            }
+        }
 
-		if unzip && strings.EqualFold(file.Ext, ".zip") {
-			if err := unzipSingleFile(destPath); err != nil {
-				return err
-			}
-		}
+        isZip := strings.EqualFold(file.Ext, ".zip")
+        if unzip && isZip {
+            if err := unzipSingleFile(destPath); err != nil {
+                return err
+            }
+        }
+
+		logger.Debug("downloaded rom file",
+			zap.String("game", game.Name),
+			zap.String("dest", destPath),
+			zap.Bool("unzipped", unzip && isZip),
+		)
 	}
-	return nil
+    return nil
 }
 
 func deriveGameDirName(game Game) string {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/xxxsen/common/logutil"
+	"go.uber.org/zap"
 
 	"retrog/internal/app"
 	"retrog/internal/cli/common"
@@ -35,6 +37,16 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 
+			ctx := cmdContext(cmd)
+			logutil.GetLogger(ctx).Info("starting ensure",
+				zap.String("meta", metaPath),
+				zap.String("category", category),
+				zap.String("dir", targetDir),
+				zap.Bool("rom", includeROM),
+				zap.Bool("media", includeMedia),
+				zap.Bool("unzip", unzip),
+			)
+
 			cfgPath, _ := cmd.Root().PersistentFlags().GetString(common.ConfigFlag)
 			cfg, err := common.LoadConfig(cfgPath)
 			if err != nil {
@@ -48,7 +60,6 @@ func NewCommand() *cobra.Command {
 
 			ensurer := app.NewEnsurer(store, cfg)
 
-			ctx := cmdContext(cmd)
 			ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 			defer cancel()
 
@@ -63,6 +74,11 @@ func NewCommand() *cobra.Command {
 			if err := ensurer.Ensure(ctx, metaPath, opts); err != nil {
 				return err
 			}
+
+			logutil.GetLogger(ctx).Info("ensure completed",
+				zap.String("category", category),
+				zap.String("dir", targetDir),
+			)
 
 			return nil
 		},
