@@ -1,6 +1,8 @@
 package app
 
-import "context"
+import (
+	"context"
+)
 
 // IRunner represents a runnable command in the application layer.
 type IRunner interface {

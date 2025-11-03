@@ -14,6 +14,10 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().String(ConfigFlag, "", "Path to configuration file")
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		_, err := ensureConfig(cmd)
+		return err
+	}
 	rootCmd.AddCommand(newUploadCommand())
 	rootCmd.AddCommand(newEnsureCommand())
 	rootCmd.AddCommand(newCleanBucketCommand())

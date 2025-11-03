@@ -44,8 +44,7 @@ func newEnsureCommand() *cobra.Command {
 				zap.Bool("unzip", unzip),
 			)
 
-			cfgPath, _ := cmd.Root().PersistentFlags().GetString(ConfigFlag)
-			cfg, err := loadConfig(cfgPath)
+			cfg, err := getConfig(cmd)
 			if err != nil {
 				return err
 			}

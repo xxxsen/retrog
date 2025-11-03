@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
 	"retrog/internal/config"
+	"retrog/internal/storage"
+
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -14,6 +18,10 @@ const (
 	defaultConfigName = "config.json"
 	systemConfigPath  = "/etc/retrog.json"
 )
+
+type contextKey string
+
+const cfgContextKey contextKey = "retrog/config"
 
 func loadConfig(explicit string) (*config.Config, error) {
 	searchPaths := make([]string, 0, 3)
@@ -28,4 +36,61 @@ func loadConfig(explicit string) (*config.Config, error) {
 	searchPaths = append(searchPaths, systemConfigPath)
 
 	return config.LoadFirst(searchPaths...)
+}
+
+func configFromContext(cmd *cobra.Command) (*config.Config, bool) {
+	if ctx := cmd.Context(); ctx != nil {
+		if cfg, ok := ctx.Value(cfgContextKey).(*config.Config); ok {
+			return cfg, true
+		}
+	}
+	if root := cmd.Root(); root != cmd {
+		if ctx := root.Context(); ctx != nil {
+			if cfg, ok := ctx.Value(cfgContextKey).(*config.Config); ok {
+				return cfg, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func ensureConfig(cmd *cobra.Command) (*config.Config, error) {
+	if cfg, ok := configFromContext(cmd); ok {
+		return cfg, nil
+	}
+
+	cfgPath, _ := cmd.Root().PersistentFlags().GetString(ConfigFlag)
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+
+	setConfigContext(cmd.Root(), cfg)
+	if cmd != cmd.Root() {
+		setConfigContext(cmd, cfg)
+	}
+
+	ctx := commandContext(cmd)
+	client, err := storage.NewS3Client(ctx, cfg.S3)
+	if err != nil {
+		return nil, err
+	}
+	storage.SetDefaultClient(client)
+
+	return cfg, nil
+}
+
+func getConfig(cmd *cobra.Command) (*config.Config, error) {
+	if cfg, ok := configFromContext(cmd); ok {
+		return cfg, nil
+	}
+	return ensureConfig(cmd)
+}
+
+func setConfigContext(cmd *cobra.Command, cfg *config.Config) {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd.SetContext(context.WithValue(ctx, cfgContextKey, cfg))
 }

@@ -23,8 +23,7 @@ func newCleanBucketCommand() *cobra.Command {
 				return errors.New("refusing to clean buckets without --force confirmation")
 			}
 
-			cfgPath, _ := cmd.Root().PersistentFlags().GetString(ConfigFlag)
-			cfg, err := loadConfig(cfgPath)
+			cfg, err := getConfig(cmd)
 			if err != nil {
 				return err
 			}

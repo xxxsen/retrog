@@ -44,20 +44,24 @@ func NewUploadCommand(cfg *config.Config, romDir, metaPath string) *UploadComman
 func (c *UploadCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 
-	store, err := storage.NewS3Client(ctx, c.cfg.S3)
+	store := storage.DefaultClient()
+	if store == nil {
+		var err error
+		store, err = storage.NewS3Client(ctx, c.cfg.S3)
+		if err != nil {
+			return err
+		}
+		storage.SetDefaultClient(store)
+	}
+
+	meta, err := c.buildMeta(ctx, store)
 	if err != nil {
 		return err
 	}
 
-	uploader := &uploader{store: store, cfg: c.cfg}
-	meta, err := uploader.Upload(ctx, c.romDir)
+	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return err
-	}
-
-	data, err := jsonMarshalIndent(meta)
-	if err != nil {
-		return err
+		return fmt.Errorf("marshal meta json: %w", err)
 	}
 
 	if err := os.WriteFile(c.metaPath, data, 0o644); err != nil {
@@ -72,19 +76,13 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 	return nil
 }
 
-// uploader orchestrates uploading ROMs and media.
-type uploader struct {
-	store storage.Client
-	cfg   *config.Config
-}
-
-func (u *uploader) Upload(ctx context.Context, romRoot string) (*Meta, error) {
+func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (*Meta, error) {
 	logger := logutil.GetLogger(ctx)
-	logger.Info("scanning rom root", zap.String("root", romRoot))
+	logger.Info("scanning rom root", zap.String("root", c.romDir))
 
-	rootEntries, err := os.ReadDir(romRoot)
+	rootEntries, err := os.ReadDir(c.romDir)
 	if err != nil {
-		return nil, fmt.Errorf("read rom root %s: %w", romRoot, err)
+		return nil, fmt.Errorf("read rom root %s: %w", c.romDir, err)
 	}
 
 	result := &Meta{}
@@ -93,8 +91,8 @@ func (u *uploader) Upload(ctx context.Context, romRoot string) (*Meta, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		categoryPath := filepath.Join(romRoot, entry.Name())
-		cat, err := u.processCategory(ctx, categoryPath)
+		categoryPath := filepath.Join(c.romDir, entry.Name())
+		cat, err := c.processCategory(ctx, store, categoryPath)
 		if err != nil {
 			return nil, err
 		}
@@ -111,7 +109,7 @@ func (u *uploader) Upload(ctx context.Context, romRoot string) (*Meta, error) {
 	return result, nil
 }
 
-func (u *uploader) processCategory(ctx context.Context, categoryPath string) (*Category, error) {
+func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (*Category, error) {
 	metaPath := filepath.Join(categoryPath, metadataFileName)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing category metadata", zap.String("meta", metaPath))
@@ -125,15 +123,13 @@ func (u *uploader) processCategory(ctx context.Context, categoryPath string) (*C
 		return nil, nil
 	}
 
-	cat := &Category{
-		CatName: doc.Collection,
-	}
+	cat := &Category{CatName: doc.Collection}
 	if cat.CatName == "" {
 		cat.CatName = filepath.Base(categoryPath)
 	}
 
 	for _, gameDef := range doc.Games {
-		game, err := u.processGame(ctx, categoryPath, gameDef)
+		game, err := c.processGame(ctx, store, categoryPath, gameDef)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +144,7 @@ func (u *uploader) processCategory(ctx context.Context, categoryPath string) (*C
 	return cat, nil
 }
 
-func (u *uploader) processGame(ctx context.Context, categoryPath string, gameDef metadata.Game) (*Game, error) {
+func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (*Game, error) {
 	cleanedName := cleanGameName(gameDef.Name)
 	cleanedDesc := cleanDescription(gameDef.Description)
 
@@ -157,7 +153,7 @@ func (u *uploader) processGame(ctx context.Context, categoryPath string, gameDef
 		Desc: cleanedDesc,
 	}
 
-	primaryMediaDir := u.findMediaDir(categoryPath, gameDef)
+	primaryMediaDir := c.findMediaDir(categoryPath, gameDef)
 
 	for _, rel := range gameDef.Files {
 		rel = strings.TrimSpace(rel)
@@ -180,7 +176,7 @@ func (u *uploader) processGame(ctx context.Context, categoryPath string, gameDef
 		key := fmt.Sprintf("%s%s", md5sum, ext)
 		originalName := filepath.Base(rel)
 		contentType := mime.TypeByExtension(ext)
-		if err := u.store.UploadFile(ctx, u.cfg.S3.RomBucket, key, full, contentType); err != nil {
+		if err := store.UploadFile(ctx, c.cfg.S3.RomBucket, key, full, contentType); err != nil {
 			return nil, err
 		}
 
@@ -192,7 +188,7 @@ func (u *uploader) processGame(ctx context.Context, categoryPath string, gameDef
 		})
 	}
 
-	media, err := u.uploadMedia(ctx, primaryMediaDir)
+	media, err := c.uploadMedia(ctx, store, primaryMediaDir)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +197,7 @@ func (u *uploader) processGame(ctx context.Context, categoryPath string, gameDef
 	return game, nil
 }
 
-func (u *uploader) findMediaDir(categoryPath string, gameDef metadata.Game) string {
+func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game) string {
 	if len(gameDef.Files) == 0 {
 		return ""
 	}
@@ -210,7 +206,7 @@ func (u *uploader) findMediaDir(categoryPath string, gameDef metadata.Game) stri
 	return filepath.Join(categoryPath, "media", base)
 }
 
-func (u *uploader) uploadMedia(ctx context.Context, dir string) (Media, error) {
+func (c *UploadCommand) uploadMedia(ctx context.Context, store storage.Client, dir string) (Media, error) {
 	res := Media{}
 	if dir == "" {
 		return res, nil
@@ -230,10 +226,10 @@ func (u *uploader) uploadMedia(ctx context.Context, dir string) (Media, error) {
 		ext := strings.ToLower(filepath.Ext(path))
 		key := fmt.Sprintf("%s%s", md5sum, ext)
 		contentType := mime.TypeByExtension(ext)
-		if err := u.store.UploadFile(ctx, u.cfg.S3.MediaBucket, key, path, contentType); err != nil {
+		if err := store.UploadFile(ctx, c.cfg.S3.MediaBucket, key, path, contentType); err != nil {
 			return res, err
 		}
-		assignMediaPath(&res, mediaType, s3Path(u.cfg.S3.MediaBucket, key))
+		assignMediaPath(&res, mediaType, s3Path(c.cfg.S3.MediaBucket, key))
 	}
 	return res, nil
 }
@@ -271,8 +267,4 @@ func firstFileWithPrefix(dir, prefix string) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-func jsonMarshalIndent(v interface{}) ([]byte, error) {
-	return json.MarshalIndent(v, "", "  ")
 }

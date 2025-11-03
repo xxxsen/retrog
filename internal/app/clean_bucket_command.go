@@ -19,9 +19,14 @@ func NewCleanBucketCommand(cfg *config.Config) *CleanBucketCommand {
 
 // Run executes the cleanup.
 func (c *CleanBucketCommand) Run(ctx context.Context) error {
-	store, err := storage.NewS3Client(ctx, c.cfg.S3)
-	if err != nil {
-		return err
+	store := storage.DefaultClient()
+	if store == nil {
+		var err error
+		store, err = storage.NewS3Client(ctx, c.cfg.S3)
+		if err != nil {
+			return err
+		}
+		storage.SetDefaultClient(store)
 	}
 
 	if err := store.ClearBucket(ctx, c.cfg.S3.RomBucket); err != nil {

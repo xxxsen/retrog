@@ -42,22 +42,22 @@ func NewEnsureCommand(cfg *config.Config, metaPath string, opts EnsureOptions) *
 
 // Run executes the ensure logic.
 func (c *EnsureCommand) Run(ctx context.Context) error {
-	store, err := storage.NewS3Client(ctx, c.cfg.S3)
-	if err != nil {
-		return err
+	store := storage.DefaultClient()
+	if store == nil {
+		var err error
+		store, err = storage.NewS3Client(ctx, c.cfg.S3)
+		if err != nil {
+			return err
+		}
+		storage.SetDefaultClient(store)
 	}
 
-	ensurer := &ensurer{store: store, cfg: c.cfg}
-	return ensurer.Ensure(ctx, c.metaPath, c.opts)
+	return c.ensure(ctx, store)
 }
 
-// ensurer handles downloading data back from S3 using the meta file.
-type ensurer struct {
-	store storage.Client
-	cfg   *config.Config
-}
+func (c *EnsureCommand) ensure(ctx context.Context, store storage.Client) error {
+	opts := c.opts
 
-func (e *ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOptions) error {
 	if err := ensureCleanDir(opts.TargetDir); err != nil {
 		return err
 	}
@@ -65,9 +65,10 @@ func (e *ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 	if !opts.IncludeROM && !opts.IncludeMedia {
 		opts.IncludeROM = true
 		opts.IncludeMedia = true
+		c.opts = opts
 	}
 
-	meta, err := loadMeta(metaPath)
+	meta, err := loadMeta(c.metaPath)
 	if err != nil {
 		return err
 	}
@@ -97,14 +98,14 @@ func (e *ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 		}
 
 		if opts.IncludeROM {
-			if err := e.downloadROMFiles(ctx, game, gameDir, opts.Unzip); err != nil {
+			if err := c.downloadROMFiles(ctx, store, game, gameDir, opts.Unzip); err != nil {
 				return err
 			}
 		}
 
 		if opts.IncludeMedia {
 			mediaDir := filepath.Join(gameDir, "media")
-			if err := e.downloadMedia(ctx, mediaDir, game.Media); err != nil {
+			if err := c.downloadMedia(ctx, store, mediaDir, game.Media); err != nil {
 				return err
 			}
 		}
@@ -113,13 +114,13 @@ func (e *ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 	return nil
 }
 
-func (e *ensurer) downloadROMFiles(ctx context.Context, game Game, gameDir string, unzip bool) error {
+func (c *EnsureCommand) downloadROMFiles(ctx context.Context, store storage.Client, game Game, gameDir string, unzip bool) error {
 	logger := logutil.GetLogger(ctx)
 	for idx, file := range game.Files {
 		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
 		destName := buildFileNameFromMeta(game, file, idx)
 		destPath := filepath.Join(gameDir, destName)
-		if err := e.store.DownloadToFile(ctx, e.cfg.S3.RomBucket, key, destPath); err != nil {
+		if err := store.DownloadToFile(ctx, c.cfg.S3.RomBucket, key, destPath); err != nil {
 			return err
 		}
 
@@ -248,7 +249,7 @@ func unzipSingleFile(zipPath string) error {
 	return nil
 }
 
-func (e *ensurer) downloadMedia(ctx context.Context, mediaDir string, media Media) error {
+func (c *EnsureCommand) downloadMedia(ctx context.Context, store storage.Client, mediaDir string, media Media) error {
 	type mediaItem struct {
 		src  string
 		name string
@@ -285,7 +286,7 @@ func (e *ensurer) downloadMedia(ctx context.Context, mediaDir string, media Medi
 			return err
 		}
 		dest := filepath.Join(mediaDir, item.name+filepath.Ext(key))
-		if err := e.store.DownloadToFile(ctx, bucket, key, dest); err != nil {
+		if err := store.DownloadToFile(ctx, bucket, key, dest); err != nil {
 			return err
 		}
 	}
