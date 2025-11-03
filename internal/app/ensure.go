@@ -93,14 +93,11 @@ func (e *Ensurer) Ensure(ctx context.Context, metaPath string, opts EnsureOption
 func (e *Ensurer) downloadROMFiles(ctx context.Context, game Game, gameDir string, unzip bool) error {
 	for idx, file := range game.Files {
 		key := fmt.Sprintf("%s%s", file.Hash, file.Ext)
-		destName := file.FileName
-		if destName == "" {
-			base := game.Hash
-			if base == "" {
-				base = file.Hash
-			}
-			destName = buildFileName(base, file.Ext, idx)
+		base := game.Hash
+		if base == "" {
+			base = file.Hash
 		}
+		destName := buildFileName(base, file.Ext, idx)
 		destPath := filepath.Join(gameDir, destName)
 		if err := e.store.DownloadToFile(ctx, e.cfg.S3.RomBucket, key, destPath); err != nil {
 			return err

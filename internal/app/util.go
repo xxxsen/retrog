@@ -85,6 +85,7 @@ func cleanDescription(desc string) string {
 	if desc == "" {
 		return desc
 	}
+	desc = normalizeWidth(desc)
 	desc = repeatPunctRegex.ReplaceAllString(desc, `$1`)
 	lines := strings.Split(desc, "\n")
 	for i, line := range lines {
@@ -94,6 +95,7 @@ func cleanDescription(desc string) string {
 }
 
 func cleanGameName(name string) string {
+	name = normalizeWidth(name)
 	name = whitespaceCollapseRegex.ReplaceAllString(name, " ")
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, " ", "-")
@@ -104,4 +106,26 @@ func cleanGameName(name string) string {
 		return "unknown"
 	}
 	return name
+}
+
+func normalizeWidth(input string) string {
+	if input == "" {
+		return input
+	}
+
+	var b strings.Builder
+	b.Grow(len(input))
+
+	for _, r := range input {
+		switch {
+		case r == 0x3000:
+			b.WriteRune(' ')
+		case r >= 0xFF01 && r <= 0xFF5E:
+			b.WriteRune(r - 0xFEE0)
+		default:
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
 }

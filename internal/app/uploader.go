@@ -103,7 +103,7 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 
 	var baseHash string
 
-	for idx, rel := range gameDef.Files {
+	for _, rel := range gameDef.Files {
 		rel = strings.TrimSpace(rel)
 		if rel == "" {
 			continue
@@ -126,11 +126,7 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 			baseHash = md5sum
 			game.Hash = baseHash
 		}
-		partName := baseHash
-		if idx > 0 {
-			partName = fmt.Sprintf("%s_part_%d", baseHash, idx+1)
-		}
-		fileName := partName + ext
+		originalName := filepath.Base(rel)
 		contentType := mime.TypeByExtension(ext)
 		if err := u.store.UploadFile(ctx, u.cfg.S3.RomBucket, key, full, contentType); err != nil {
 			return nil, err
@@ -141,7 +137,7 @@ func (u *Uploader) processGame(ctx context.Context, categoryPath string, gameDef
 			Ext:         ext,
 			Size:        info.Size(),
 			DisplayName: cleanedName,
-			FileName:    fileName,
+			FileName:    originalName,
 		})
 	}
 
