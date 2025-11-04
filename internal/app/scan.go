@@ -24,8 +24,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const metadataFile = "metadata.pegasus.txt"
-const gamelistFile = "gamelist.xml"
+const (
+	defaultMetadataFile = "metadata.pegasus.txt"
+	defaultGamelistFile = "gamelist.xml"
+)
 
 var mediaCandidates = map[string]string{
 	"boxart":     "boxart",
@@ -117,7 +119,7 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 			return nil
 		}
 		name := d.Name()
-		if name != metadataFile && name != gamelistFile {
+		if name != defaultMetadataFile && name != defaultGamelistFile {
 			return nil
 		}
 
@@ -129,10 +131,12 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 		dir := filepath.Dir(path)
 		var records map[string]model.Entry
 		var err error
-		if name == metadataFile {
-			records, err = c.processCategory(ctx, store, dir)
-		} else {
+		if name == defaultMetadataFile {
+			records, err = c.processMetadata(ctx, store, dir)
+		} else if name == defaultGamelistFile {
 			records, err = c.processGamelist(ctx, store, dir)
+		} else {
+			return fmt.Errorf("invalid meta file:%s", name)
 		}
 		if err != nil {
 			return err
@@ -167,8 +171,8 @@ func (c *ScanCommand) persistMeta(ctx context.Context, meta map[string]model.Ent
 	return dao.InsertOnly(ctx, meta)
 }
 
-func (c *ScanCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {
-	metaPath := filepath.Join(categoryPath, metadataFile)
+func (c *ScanCommand) processMetadata(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {
+	metaPath := filepath.Join(categoryPath, defaultMetadataFile)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing metadata", zap.String("path", metaPath))
 
@@ -197,7 +201,7 @@ func (c *ScanCommand) processCategory(ctx context.Context, store storage.Client,
 }
 
 func (c *ScanCommand) processGamelist(ctx context.Context, store storage.Client, platformPath string) (map[string]model.Entry, error) {
-	gamelistPath := filepath.Join(platformPath, gamelistFile)
+	gamelistPath := filepath.Join(platformPath, defaultGamelistFile)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing gamelist", zap.String("path", gamelistPath))
 
