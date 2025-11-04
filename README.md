@@ -5,6 +5,7 @@
 - 扫描本地 ROM 目录，上传媒体资源到兼容 S3 的对象存储；
 - 生成并维护 SQLite 版的 ROM 元数据；
 - 按哈希查询元信息；
+- 在调试或迁移时导出 / 导入媒体与元数据；
 - 将 meta.db 中的内容补齐到 retrom 项目的 PostgreSQL 数据库；
 - 在调试时一键清空对象存储。
 
@@ -76,6 +77,24 @@ retrog normalize --dir ./roms/gba [--unzip]
 - 若检测到诸如 `xxx.gb` 直接位于平台目录下，会创建 `xxx/` 并移动到 `xxx/xxx.gb`；
 - `--unzip` 可在 zip 仅包含单个 ROM 时自动解压并删除压缩包；
 - 已位于目录中的游戏会被跳过。
+
+### `export`
+
+```bash
+retrog export --out ./backup.tar.gz
+```
+
+- 从 SQLite 与 S3 读取元数据与媒体，导出为含 `metadata.json` 与 `media/` 目录的 tar.gz；
+- `metadata.json` 记录哈希、描述、开发商、发行商、分类、发行时间等字段；媒体文件按哈希前四位分层存储。
+
+### `import`
+
+```bash
+retrog import --file ./backup.tar.gz
+```
+
+- 解析备份包，上传媒体至 S3 并写回 meta.db；
+- `metadata.json` 中缺失的字段自动忽略，已有记录会执行更新。
 
 ### `patch-retrom-meta`
 

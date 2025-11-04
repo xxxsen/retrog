@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -87,4 +88,13 @@ func readerMD5(r io.Reader) (string, error) {
 		return "", fmt.Errorf("hash reader: %w", err)
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func mediaRelativePath(hash, ext string) string {
+	h := hash
+	if len(h) < 2 {
+		h += strings.Repeat("0", 2-len(h))
+	}
+	first := h[:2]
+	return filepath.Join("media", first, hash+ext)
 }

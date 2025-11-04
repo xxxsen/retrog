@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -152,6 +153,48 @@ func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[str
 func (dao *MetaDAO) ClearAll(ctx context.Context) error {
 	_, err := dao.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", metaTableName))
 	return err
+}
+
+type StoredMeta struct {
+	ID    int64
+	Hash  string
+	Entry model.Entry
+}
+
+func (dao *MetaDAO) FetchPage(ctx context.Context, lastID int64, limit int) ([]StoredMeta, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	query := fmt.Sprintf("SELECT id, rom_hash, rom_name, rom_desc, rom_size, ext_info FROM %s WHERE id > ? ORDER BY id ASC LIMIT ?", metaTableName)
+	rows, err := dao.db.QueryContext(ctx, query, lastID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]StoredMeta, 0, limit)
+	for rows.Next() {
+		var (
+			id     int64
+			hash   string
+			name   string
+			desc   string
+			size   int64
+			extRaw sql.NullString
+		)
+		if err := rows.Scan(&id, &hash, &name, &desc, &size, &extRaw); err != nil {
+			return nil, err
+		}
+		entry, err := model.FromRecord(name, desc, size, extRaw.String)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, StoredMeta{ID: id, Hash: hash, Entry: entry})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func isUniqueConstraintError(err error) bool {
