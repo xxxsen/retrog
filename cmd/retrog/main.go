@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 
 	"github.com/xxxsen/retrog/internal/cli"
 
@@ -15,6 +14,5 @@ func main() {
 	logger.Init("", "debug", 0, 0, 0, true)
 	if err := cli.Execute(); err != nil {
 		logutil.GetLogger(context.Background()).Fatal("exec cli failed", zap.Error(err))
-		os.Exit(1)
 	}
 }
