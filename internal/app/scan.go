@@ -43,7 +43,8 @@ var mediaAssetAliases = map[string][]string{
 }
 
 type ScanCommand struct {
-	romDir string
+	romDir      string
+	allowUpdate bool
 }
 
 func (c *ScanCommand) Name() string { return "scan" }
@@ -56,6 +57,7 @@ func NewScanCommand() *ScanCommand { return &ScanCommand{} }
 
 func (c *ScanCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.romDir, "dir", "", "ROM 根目录")
+	f.BoolVar(&c.allowUpdate, "allow-update", false, "允许更新已存在的元数据，默认只新增")
 }
 
 func (c *ScanCommand) PreRun(ctx context.Context) error {
@@ -91,6 +93,7 @@ func (c *ScanCommand) Run(ctx context.Context) error {
 		zap.Int("entries", len(meta)),
 		zap.Int("inserted", inserted),
 		zap.Int("updated", updated),
+		zap.Bool("allow_update", c.allowUpdate),
 	)
 	return nil
 }
@@ -145,7 +148,10 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 
 func (c *ScanCommand) persistMeta(ctx context.Context, meta map[string]model.Entry) (int, int, error) {
 	dao := appdb.NewMetaDAO()
-	return dao.Upsert(ctx, meta)
+	if c.allowUpdate {
+		return dao.Upsert(ctx, meta)
+	}
+	return dao.InsertOnly(ctx, meta)
 }
 
 func (c *ScanCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {

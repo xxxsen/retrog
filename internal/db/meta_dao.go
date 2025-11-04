@@ -102,6 +102,51 @@ func (dao *MetaDAO) Upsert(ctx context.Context, records map[string]model.Entry) 
 	return inserted, updated, nil
 }
 
+func (dao *MetaDAO) InsertOnly(ctx context.Context, records map[string]model.Entry) (inserted int, updated int, err error) {
+	if len(records) == 0 {
+		return 0, 0, nil
+	}
+
+	keys := make([]string, 0, len(records))
+	for hash := range records {
+		keys = append(keys, hash)
+	}
+	sort.Strings(keys)
+
+	for _, hash := range keys {
+		record := records[hash]
+		extJSON, err := record.MarshalExtInfo()
+		if err != nil {
+			return inserted, updated, err
+		}
+
+		now := time.Now().Unix()
+		insertPayload := []map[string]interface{}{{
+			"rom_hash":    hash,
+			"rom_name":    record.Name,
+			"rom_desc":    record.Desc,
+			"rom_size":    record.Size,
+			"create_time": now,
+			"update_time": now,
+			"ext_info":    extJSON,
+		}}
+		insertSQL, insertArgs, err := builder.BuildInsert(metaTableName, insertPayload)
+		if err != nil {
+			return inserted, updated, err
+		}
+		if _, err := dao.db.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
+			if isUniqueConstraintError(err) {
+				updated++
+				continue
+			}
+			return inserted, updated, err
+		}
+		inserted++
+	}
+
+	return inserted, updated, nil
+}
+
 // FetchByHashes returns metadata entries for the requested ROM hashes.
 func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[string]model.Entry, []string, error) {
 	result := make(map[string]model.Entry, len(hashes))
