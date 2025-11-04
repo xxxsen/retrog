@@ -15,8 +15,3 @@ type IRunner interface {
 	Run(ctx context.Context) error
 	PostRun(ctx context.Context) error
 }
-
-// DBPathOverride allows commands to override the database path provided by config.
-type DBPathOverride interface {
-	DBOverridePath() string
-}
