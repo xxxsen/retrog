@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	appdb "github.com/xxxsen/retrog/internal/db"
 	"github.com/xxxsen/retrog/internal/storage"
 
 	"github.com/spf13/pflag"
@@ -46,6 +47,10 @@ func (c *CleanBucketCommand) PreRun(ctx context.Context) error {
 func (c *CleanBucketCommand) Run(ctx context.Context) error {
 	store := storage.DefaultClient()
 	if err := store.ClearBucket(ctx); err != nil {
+		return err
+	}
+	dao := appdb.NewMetaDAO()
+	if err := dao.ClearAll(ctx); err != nil {
 		return err
 	}
 	return nil

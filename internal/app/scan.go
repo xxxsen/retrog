@@ -141,10 +141,7 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 }
 
 func (c *ScanCommand) persistMeta(ctx context.Context, meta map[string]model.Entry) (int, int, error) {
-	dao, err := appdb.NewMetaDAO()
-	if err != nil {
-		return 0, 0, err
-	}
+	dao := appdb.NewMetaDAO()
 	return dao.Upsert(ctx, meta)
 }
 

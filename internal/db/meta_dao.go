@@ -2,7 +2,7 @@ package db
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -24,12 +24,8 @@ type MetaDAO struct {
 }
 
 // NewMetaDAO builds a DAO using the globally configured database.
-func NewMetaDAO() (*MetaDAO, error) {
-	db := Default()
-	if db == nil {
-		return nil, errors.New("database not initialised")
-	}
-	return &MetaDAO{db: db}, nil
+func NewMetaDAO() *MetaDAO {
+	return &MetaDAO{db: Default()}
 }
 
 // Upsert inserts or updates metadata records, returning the number of inserted and updated rows.
@@ -151,6 +147,11 @@ func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[str
 	}
 
 	return result, missing, rows.Err()
+}
+
+func (dao *MetaDAO) ClearAll(ctx context.Context) error {
+	_, err := dao.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", metaTableName))
+	return err
 }
 
 func isUniqueConstraintError(err error) bool {

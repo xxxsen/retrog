@@ -78,10 +78,7 @@ func (c *PatchRetromMetaCommand) PreRun(ctx context.Context) error {
 }
 
 func (c *PatchRetromMetaCommand) Run(ctx context.Context) error {
-	dao, err := appdb.NewMetaDAO()
-	if err != nil {
-		return err
-	}
+	dao := appdb.NewMetaDAO()
 
 	db, err := sql.Open("postgres", c.dblink)
 	if err != nil {
