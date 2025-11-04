@@ -25,6 +25,7 @@ import (
 )
 
 const metadataFile = "metadata.pegasus.txt"
+const gamelistFile = "gamelist.xml"
 
 var mediaCandidates = map[string]string{
 	"boxart":     "boxart",
@@ -67,6 +68,7 @@ func (c *ScanCommand) PreRun(ctx context.Context) error {
 
 	logutil.GetLogger(ctx).Info("starting scan",
 		zap.String("dir", c.romDir),
+		zap.Bool("allow_update", c.allowUpdate),
 	)
 	return nil
 }
@@ -111,27 +113,38 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 		if walkErr != nil {
 			return walkErr
 		}
-		if d.IsDir() || d.Name() != metadataFile {
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if name != metadataFile && name != gamelistFile {
+			return nil
+		}
+
+		key := filepath.Clean(path)
+		if _, ok := processed[key]; ok {
 			return nil
 		}
 
 		dir := filepath.Dir(path)
-		if _, ok := processed[dir]; ok {
-			return nil
+		var records map[string]model.Entry
+		var err error
+		if name == metadataFile {
+			records, err = c.processCategory(ctx, store, dir)
+		} else {
+			records, err = c.processGamelist(ctx, store, dir)
 		}
-
-		records, err := c.processCategory(ctx, store, dir)
 		if err != nil {
 			return err
 		}
 		for hash, item := range records {
 			meta[hash] = item
 		}
-		processed[dir] = struct{}{}
+		processed[key] = struct{}{}
 
-		rel, _ := filepath.Rel(c.romDir, dir)
+		rel, _ := filepath.Rel(c.romDir, path)
 		logger.Debug("metadata processed",
-			zap.String("dir", filepath.ToSlash(rel)),
+			zap.String("file", filepath.ToSlash(rel)),
 			zap.Int("records", len(records)),
 		)
 		return nil
@@ -173,6 +186,32 @@ func (c *ScanCommand) processCategory(ctx context.Context, store storage.Client,
 	result := make(map[string]model.Entry)
 	for _, gameDef := range doc.Games {
 		entries, err := c.processGame(ctx, store, categoryPath, gameDef)
+		if err != nil {
+			return nil, err
+		}
+		for hash, item := range entries {
+			result[hash] = item
+		}
+	}
+	return result, nil
+}
+
+func (c *ScanCommand) processGamelist(ctx context.Context, store storage.Client, platformPath string) (map[string]model.Entry, error) {
+	gamelistPath := filepath.Join(platformPath, gamelistFile)
+	logger := logutil.GetLogger(ctx)
+	logger.Debug("processing gamelist", zap.String("path", gamelistPath))
+
+	doc, err := metadata.ParseGamelist(gamelistPath)
+	if err != nil {
+		return nil, fmt.Errorf("parse gamelist %s: %w", gamelistPath, err)
+	}
+	if len(doc.Games) == 0 {
+		return map[string]model.Entry{}, nil
+	}
+
+	result := make(map[string]model.Entry)
+	for _, game := range doc.Games {
+		entries, err := c.processGamelistGame(ctx, store, platformPath, game)
 		if err != nil {
 			return nil, err
 		}
@@ -253,6 +292,75 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 				innerEntry.Genres = append([]string(nil), baseEntry.Genres...)
 				entries[hash] = innerEntry
 			}
+		}
+	}
+
+	return entries, nil
+}
+
+func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Client, platformPath string, game metadata.GamelistEntry) (map[string]model.Entry, error) {
+	logger := logutil.GetLogger(ctx)
+	entries := make(map[string]model.Entry)
+
+	romPath := resolveResourcePath(platformPath, game.Path)
+	if romPath == "" {
+		return entries, nil
+	}
+
+	info, err := os.Stat(romPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			logger.Warn("rom path missing", zap.String("path", romPath))
+			return entries, nil
+		}
+		return nil, fmt.Errorf("stat rom file %s: %w", romPath, err)
+	}
+	if info.IsDir() {
+		logger.Warn("rom path is directory, skip", zap.String("path", romPath))
+		return entries, nil
+	}
+
+	md5sum, err := fileMD5(romPath)
+	if err != nil {
+		return nil, err
+	}
+
+	mediaPaths := map[string]string{
+		"boxart": resolveResourcePath(platformPath, game.Image),
+		"video":  resolveResourcePath(platformPath, game.Video),
+	}
+	mediaMap, err := c.collectSpecifiedMedia(ctx, store, mediaPaths)
+	if err != nil {
+		return nil, err
+	}
+
+	entry := model.Entry{
+		Name:      cleanGameName(game.Name),
+		Desc:      cleanDescription(game.Description),
+		Size:      info.Size(),
+		Developer: strings.TrimSpace(game.Developer),
+		Publisher: strings.TrimSpace(game.Publisher),
+		Genres:    cloneStringSlice(game.Genres),
+		ReleaseAt: parseReleaseTimestamp(game.ReleaseDate),
+		Media:     make([]model.MediaEntry, 0, len(mediaMap)),
+	}
+	for mediaType, asset := range mediaMap {
+		asset.Type = strings.ToLower(mediaType)
+		entry.Media = append(entry.Media, asset)
+	}
+	entries[md5sum] = entry
+
+	if strings.EqualFold(filepath.Ext(romPath), ".zip") {
+		hash, size, ok, err := singleFileHashFromZip(romPath)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			inner := entry
+			inner.Size = size
+			inner.Media = append([]model.MediaEntry(nil), entry.Media...)
+			inner.Genres = cloneStringSlice(entry.Genres)
+			entries[hash] = inner
 		}
 	}
 
@@ -395,6 +503,60 @@ func singleFileHashFromZip(path string) (string, int64, bool, error) {
 	return hash, size, true, nil
 }
 
+func resolveResourcePath(baseDir, pathValue string) string {
+	val := strings.TrimSpace(pathValue)
+	if val == "" {
+		return ""
+	}
+	if filepath.IsAbs(val) {
+		return filepath.Clean(val)
+	}
+	val = strings.TrimPrefix(val, "./")
+	val = strings.TrimPrefix(val, ".\\")
+	val = filepath.Clean(filepath.FromSlash(val))
+	return filepath.Join(baseDir, val)
+}
+
+func (c *ScanCommand) collectSpecifiedMedia(ctx context.Context, store storage.Client, paths map[string]string) (map[string]model.MediaEntry, error) {
+	result := make(map[string]model.MediaEntry)
+	logger := logutil.GetLogger(ctx)
+
+	for mediaType, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				logger.Warn("media path missing", zap.String("path", path))
+				continue
+			}
+			return nil, fmt.Errorf("stat media %s: %w", path, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+
+		md5sum, err := fileMD5(path)
+		if err != nil {
+			return nil, err
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		key := fmt.Sprintf("%s%s", md5sum, ext)
+		contentType := mime.TypeByExtension(ext)
+		if err := store.UploadFile(ctx, key, path, contentType); err != nil {
+			return nil, err
+		}
+		result[mediaType] = model.MediaEntry{
+			Hash: md5sum,
+			Ext:  ext,
+			Size: info.Size(),
+		}
+	}
+
+	return result, nil
+}
+
 func cloneStringSlice(src []string) []string {
 	if len(src) == 0 {
 		return nil
@@ -420,6 +582,8 @@ func parseReleaseTimestamp(value string) int64 {
 		"2006.01.02 15:04:05",
 		"2006-1-2",
 		"2006/1/2",
+		"20060102T150405",
+		"20060102T150405Z",
 	}
 	for _, layout := range layouts {
 		if t, err := time.ParseInLocation(layout, val, time.UTC); err == nil {
