@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"mime"
 	"os"
 	"path/filepath"
@@ -38,35 +39,34 @@ var mediaAssetAliases = map[string][]string{
 	"logo":       {"logo"},
 }
 
-type UploadCommand struct {
+type ScanCommand struct {
 	romDir string
-	cats   []string
 }
 
-func (c *UploadCommand) Name() string { return "upload" }
+func (c *ScanCommand) Name() string { return "scan" }
 
-func (c *UploadCommand) Desc() string {
-	return "上传媒体资源并写入以 ROM 哈希为键的元数据"
+func (c *ScanCommand) Desc() string {
+	return "扫描 ROM 目录，上传媒体并写入元数据"
 }
 
-func NewUploadCommand() *UploadCommand { return &UploadCommand{} }
+func NewScanCommand() *ScanCommand { return &ScanCommand{} }
 
-func (c *UploadCommand) Init(f *pflag.FlagSet) {
+func (c *ScanCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.romDir, "dir", "", "ROM 根目录")
-	f.StringSliceVar(&c.cats, "cat", nil, "要处理的子目录列表，逗号分隔；为空则全部上传")
 }
 
-func (c *UploadCommand) PreRun(ctx context.Context) error {
-	if c.romDir == "" {
-		return errors.New("upload requires --dir")
+func (c *ScanCommand) PreRun(ctx context.Context) error {
+	if strings.TrimSpace(c.romDir) == "" {
+		return errors.New("scan requires --dir")
 	}
-	logutil.GetLogger(ctx).Info("starting upload",
+
+	logutil.GetLogger(ctx).Info("starting scan",
 		zap.String("dir", c.romDir),
 	)
 	return nil
 }
 
-func (c *UploadCommand) Run(ctx context.Context) error {
+func (c *ScanCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 
 	store := storage.DefaultClient()
@@ -84,7 +84,7 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	logger.Info("upload run completed",
+	logger.Info("scan completed",
 		zap.Int("entries", len(meta)),
 		zap.Int("inserted", inserted),
 		zap.Int("updated", updated),
@@ -92,53 +92,55 @@ func (c *UploadCommand) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *UploadCommand) PostRun(ctx context.Context) error { return nil }
+func (c *ScanCommand) PostRun(ctx context.Context) error { return nil }
 
-func (c *UploadCommand) buildMeta(ctx context.Context, store storage.Client) (map[string]model.Entry, error) {
+func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[string]model.Entry, error) {
 	logger := logutil.GetLogger(ctx)
-	logger.Info("scanning rom root", zap.String("root", c.romDir))
-
-	entries, err := os.ReadDir(c.romDir)
-	if err != nil {
-		return nil, fmt.Errorf("read rom root %s: %w", c.romDir, err)
-	}
-
-	allowed := make(map[string]struct{})
-	if len(c.cats) > 0 {
-		for _, name := range c.cats {
-			if trimmed := strings.TrimSpace(name); trimmed != "" {
-				allowed[trimmed] = struct{}{}
-			}
-		}
-	}
+	logger.Info("scanning rom tree", zap.String("root", c.romDir))
 
 	meta := make(map[string]model.Entry)
+	processed := make(map[string]struct{})
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	err := filepath.WalkDir(c.romDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		if len(allowed) > 0 {
-			if _, ok := allowed[entry.Name()]; !ok {
-				continue
-			}
+		if d.IsDir() || d.Name() != metadataFile {
+			return nil
 		}
 
-		categoryPath := filepath.Join(c.romDir, entry.Name())
-		records, err := c.processCategory(ctx, store, categoryPath)
+		dir := filepath.Dir(path)
+		if _, ok := processed[dir]; ok {
+			return nil
+		}
+
+		records, err := c.processCategory(ctx, store, dir)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		for hash, item := range records {
 			meta[hash] = item
 		}
-		logger.Debug("category processed", zap.String("path", categoryPath), zap.Int("records", len(records)))
+		processed[dir] = struct{}{}
+
+		rel, _ := filepath.Rel(c.romDir, dir)
+		logger.Debug("metadata processed",
+			zap.String("dir", filepath.ToSlash(rel)),
+			zap.Int("records", len(records)),
+		)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
+	if len(meta) == 0 {
+		logger.Warn("no metadata discovered", zap.String("root", c.romDir))
+	}
 	return meta, nil
 }
 
-func (c *UploadCommand) persistMeta(ctx context.Context, meta map[string]model.Entry) (int, int, error) {
+func (c *ScanCommand) persistMeta(ctx context.Context, meta map[string]model.Entry) (int, int, error) {
 	dao, err := appdb.NewMetaDAO()
 	if err != nil {
 		return 0, 0, err
@@ -146,7 +148,7 @@ func (c *UploadCommand) persistMeta(ctx context.Context, meta map[string]model.E
 	return dao.Upsert(ctx, meta)
 }
 
-func (c *UploadCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {
+func (c *ScanCommand) processCategory(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {
 	metaPath := filepath.Join(categoryPath, metadataFile)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing metadata", zap.String("path", metaPath))
@@ -155,7 +157,9 @@ func (c *UploadCommand) processCategory(ctx context.Context, store storage.Clien
 	if err != nil {
 		return nil, fmt.Errorf("parse metadata %s: %w", metaPath, err)
 	}
-	doc.Cat = filepath.Base(categoryPath)
+	if rel, err := filepath.Rel(c.romDir, categoryPath); err == nil {
+		doc.Cat = filepath.ToSlash(rel)
+	}
 	if len(doc.Games) == 0 {
 		return map[string]model.Entry{}, nil
 	}
@@ -173,7 +177,7 @@ func (c *UploadCommand) processCategory(ctx context.Context, store storage.Clien
 	return result, nil
 }
 
-func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (map[string]model.Entry, error) {
+func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (map[string]model.Entry, error) {
 	entries := make(map[string]model.Entry)
 
 	cleanedName := cleanGameName(gameDef.Name)
@@ -226,7 +230,7 @@ func (c *UploadCommand) processGame(ctx context.Context, store storage.Client, c
 	return entries, nil
 }
 
-func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game) string {
+func (c *ScanCommand) findMediaDir(categoryPath string, gameDef metadata.Game) string {
 	if len(gameDef.Files) == 0 {
 		return ""
 	}
@@ -235,7 +239,7 @@ func (c *UploadCommand) findMediaDir(categoryPath string, gameDef metadata.Game)
 	return filepath.Join(categoryPath, "media", base)
 }
 
-func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]model.MediaEntry, error) {
+func (c *ScanCommand) collectMedia(ctx context.Context, store storage.Client, categoryPath, defaultDir string, gameDef metadata.Game) (map[string]model.MediaEntry, error) {
 	result := make(map[string]model.MediaEntry)
 	for mediaType, baseName := range mediaCandidates {
 		path, err := c.pickMediaSource(ctx, categoryPath, defaultDir, gameDef, mediaType, baseName)
@@ -268,7 +272,7 @@ func (c *UploadCommand) collectMedia(ctx context.Context, store storage.Client, 
 	return result, nil
 }
 
-func (c *UploadCommand) pickMediaSource(ctx context.Context, categoryPath, defaultDir string, gameDef metadata.Game, mediaType, baseName string) (string, error) {
+func (c *ScanCommand) pickMediaSource(ctx context.Context, categoryPath, defaultDir string, gameDef metadata.Game, mediaType, baseName string) (string, error) {
 	if candidate := c.assetPathFromMetadata(categoryPath, gameDef, mediaType); candidate != "" {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
@@ -284,7 +288,7 @@ func (c *UploadCommand) pickMediaSource(ctx context.Context, categoryPath, defau
 	return firstFileWithPrefix(defaultDir, baseName)
 }
 
-func (c *UploadCommand) assetPathFromMetadata(categoryPath string, gameDef metadata.Game, mediaType string) string {
+func (c *ScanCommand) assetPathFromMetadata(categoryPath string, gameDef metadata.Game, mediaType string) string {
 	if len(gameDef.Assets) == 0 {
 		return ""
 	}
@@ -326,5 +330,5 @@ func firstFileWithPrefix(dir, prefix string) (string, error) {
 }
 
 func init() {
-	RegisterRunner("upload", func() IRunner { return NewUploadCommand() })
+	RegisterRunner("scan", func() IRunner { return NewScanCommand() })
 }

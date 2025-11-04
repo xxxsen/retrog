@@ -32,16 +32,15 @@ go build ./cmd/retrog
 
 所有子命令均支持 `--config` 指定配置，执行前会自动初始化 S3 与 SQLite。
 
-### `upload`
+### `scan`
 
 ```bash
-retrog upload \
-  --dir <rom_root> \
-  [--cat cat1,cat2]
+retrog scan \
+  --dir <rom_root>
 ```
 
-- 遍历指定目录，解析 `metadata.pegasus.txt`；
-- 上传封面/截图/视频等媒体文件至 S3（命名为 `media/<md5><ext>`）；
+- 递归遍历 `--dir` 下所有子目录，只要检测到 `metadata.pegasus.txt` 就会进行扫描；
+- 解析元数据、上传封面/截图/视频等媒体文件至 S3（命名为 `media/<md5><ext>`）；
 - 将清洗后的名称、描述、媒体信息写入 SQLite 的 `retro_game_meta_tab`。
 
 ### `query`
