@@ -80,3 +80,11 @@ func normalizeWidth(input string) string {
 
 	return b.String()
 }
+
+func readerMD5(r io.Reader) (string, error) {
+	hasher := md5.New()
+	if _, err := io.Copy(hasher, r); err != nil {
+		return "", fmt.Errorf("hash reader: %w", err)
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}

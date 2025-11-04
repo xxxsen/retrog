@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
 	"fmt"
@@ -222,6 +223,22 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 			Size:  info.Size(),
 			Media: mediaCopy,
 		}
+
+		if strings.EqualFold(filepath.Ext(full), ".zip") {
+			hash, size, ok, err := singleFileHashFromZip(full)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				dupMedia := append([]model.MediaEntry(nil), mediaCopy...)
+				entries[hash] = model.Entry{
+					Name:  cleanedName,
+					Desc:  cleanedDesc,
+					Size:  size,
+					Media: dupMedia,
+				}
+			}
+		}
 	}
 
 	return entries, nil
@@ -324,6 +341,43 @@ func firstFileWithPrefix(dir, prefix string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func singleFileHashFromZip(path string) (string, int64, bool, error) {
+	r, err := zip.OpenReader(path)
+	if err != nil {
+		return "", 0, false, fmt.Errorf("open zip %s: %w", path, err)
+	}
+	defer r.Close()
+
+	var target *zip.File
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		if target != nil {
+			return "", 0, false, nil
+		}
+		target = f
+	}
+
+	if target == nil {
+		return "", 0, false, nil
+	}
+
+	rc, err := target.Open()
+	if err != nil {
+		return "", 0, false, fmt.Errorf("open zip entry %s: %w", target.Name, err)
+	}
+	defer rc.Close()
+
+	hash, err := readerMD5(rc)
+	if err != nil {
+		return "", 0, false, fmt.Errorf("hash zip entry %s: %w", target.Name, err)
+	}
+
+	size := int64(target.UncompressedSize64)
+	return hash, size, true, nil
 }
 
 func init() {
