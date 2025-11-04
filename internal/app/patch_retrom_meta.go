@@ -10,6 +10,7 @@ import (
 
 	appdb "github.com/xxxsen/retrog/internal/db"
 	"github.com/xxxsen/retrog/internal/model"
+	"github.com/xxxsen/retrog/internal/storage"
 
 	"github.com/lib/pq"
 	"github.com/spf13/pflag"
@@ -150,7 +151,7 @@ WHERE NOT gf.is_deleted AND NOT g.is_deleted`
 		}
 
 		entry := metaMap[hash]
-		payload := buildMetaPayload(entry)
+		payload := buildMetaPayload(ctx, entry)
 
 		if c.dryRun {
 			logger.Info("dryrun patch metadata",
@@ -214,12 +215,12 @@ type metaPayload struct {
 	artworkURLs    []string
 }
 
-func buildMetaPayload(entry model.Entry) metaPayload {
+func buildMetaPayload(ctx context.Context, entry model.Entry) metaPayload {
 	var cover, background, icon sql.NullString
 	var videos, screenshots, artworks []string
 
 	for _, m := range entry.Media {
-		url := mediaURL(m)
+		url := mediaURL(ctx, m)
 		switch m.Type {
 		case "boxart", "boxfront":
 			if !cover.Valid {
@@ -263,8 +264,9 @@ func buildMetaPayload(entry model.Entry) metaPayload {
 	}
 }
 
-func mediaURL(m model.MediaEntry) string {
-	return fmt.Sprintf("media/%s%s", m.Hash, m.Ext)
+func mediaURL(ctx context.Context, m model.MediaEntry) string {
+	key := m.Hash + m.Ext
+	return storage.DefaultClient().GetDownloadLink(ctx, key)
 }
 
 func upsertGameMetadata(ctx context.Context, db *sql.DB, gameID int, payload metaPayload) (bool, error) {

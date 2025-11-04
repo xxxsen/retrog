@@ -21,6 +21,7 @@ import (
 
 type s3Client struct {
 	client *s3.Client
+	host   string
 	bucket string
 }
 
@@ -53,7 +54,11 @@ func NewS3Client(ctx context.Context, cfg appconfig.S3Config) (Client, error) {
 		o.UsePathStyle = cfg.ForcePathStyle
 	})
 
-	return &s3Client{client: client, bucket: cfg.Bucket}, nil
+	return &s3Client{client: client, host: endpoint, bucket: cfg.Bucket}, nil
+}
+
+func (c *s3Client) GetDownloadLink(ctx context.Context, key string) string {
+	return strings.Join([]string{c.host, c.bucket, key}, "/")
 }
 
 func (c *s3Client) UploadFile(ctx context.Context, key, filePath string, contentType string) error {
