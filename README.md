@@ -68,11 +68,12 @@ retrog clean-bucket --force
 ### `normalize`
 
 ```bash
-retrog normalize --dir ./roms/gba
+retrog normalize --dir ./roms/gba [--unzip]
 ```
 
 - 仅处理指定平台目录的顶层文件；
 - 若检测到诸如 `xxx.gb` 直接位于平台目录下，会创建 `xxx/` 并移动到 `xxx/xxx.gb`；
+- `--unzip` 可在 zip 仅包含单个 ROM 时自动解压并删除压缩包；
 - 已位于目录中的游戏会被跳过。
 
 ### `patch-retrom-meta`
