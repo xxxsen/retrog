@@ -10,7 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	appdb "github.com/xxxsen/retrog/internal/db"
 	"github.com/xxxsen/retrog/internal/metadata"
@@ -180,6 +182,10 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 
 	cleanedName := cleanGameName(gameDef.Name)
 	cleanedDesc := cleanDescription(gameDef.Description)
+	developer := strings.TrimSpace(gameDef.Developer)
+	publisher := strings.TrimSpace(gameDef.Publisher)
+	genres := cloneStringSlice(gameDef.Genres)
+	releaseTs := parseReleaseTimestamp(gameDef.Release)
 
 	mediaDir := c.findMediaDir(categoryPath, gameDef)
 	mediaMap, err := c.collectMedia(ctx, store, categoryPath, mediaDir, gameDef)
@@ -217,12 +223,17 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 				mediaCopy = append(mediaCopy, asset)
 			}
 		}
-		entries[md5sum] = model.Entry{
-			Name:  cleanedName,
-			Desc:  cleanedDesc,
-			Size:  info.Size(),
-			Media: mediaCopy,
+		baseEntry := model.Entry{
+			Name:      cleanedName,
+			Desc:      cleanedDesc,
+			Size:      info.Size(),
+			Media:     mediaCopy,
+			Developer: developer,
+			Publisher: publisher,
+			Genres:    genres,
+			ReleaseAt: releaseTs,
 		}
+		entries[md5sum] = baseEntry
 
 		if strings.EqualFold(filepath.Ext(full), ".zip") {
 			hash, size, ok, err := singleFileHashFromZip(full)
@@ -230,13 +241,11 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 				return nil, err
 			}
 			if ok {
-				dupMedia := append([]model.MediaEntry(nil), mediaCopy...)
-				entries[hash] = model.Entry{
-					Name:  cleanedName,
-					Desc:  cleanedDesc,
-					Size:  size,
-					Media: dupMedia,
-				}
+				innerEntry := baseEntry
+				innerEntry.Size = size
+				innerEntry.Media = append([]model.MediaEntry(nil), baseEntry.Media...)
+				innerEntry.Genres = append([]string(nil), baseEntry.Genres...)
+				entries[hash] = innerEntry
 			}
 		}
 	}
@@ -378,6 +387,48 @@ func singleFileHashFromZip(path string) (string, int64, bool, error) {
 
 	size := int64(target.UncompressedSize64)
 	return hash, size, true, nil
+}
+
+func cloneStringSlice(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]string, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func parseReleaseTimestamp(value string) int64 {
+	val := strings.TrimSpace(value)
+	if val == "" {
+		return 0
+	}
+
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02",
+		"2006/01/02",
+		"2006-01-02 15:04:05",
+		"2006/01/02 15:04:05",
+		"2006.01.02",
+		"2006.01.02 15:04:05",
+		"2006-1-2",
+		"2006/1/2",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, val, time.UTC); err == nil {
+			return t.Unix()
+		}
+	}
+
+	if len(val) == 4 {
+		if year, err := strconv.Atoi(val); err == nil && year >= 1970 && year <= 9999 {
+			t := time.Date(year, time.January, 1, 0, 0, 0, 0, time.UTC)
+			return t.Unix()
+		}
+	}
+
+	return 0
 }
 
 func init() {

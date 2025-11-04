@@ -13,6 +13,10 @@ type Game struct {
 	Files       []string
 	Description string
 	Assets      map[string]string
+	Developer   string
+	Publisher   string
+	Genres      []string
+	Release     string
 }
 
 // Document represents a metadata file and its games.
@@ -80,6 +84,32 @@ func Parse(path string) (*Document, error) {
 				continue
 			}
 			current.Description = value
+		case "developer":
+			if current == nil {
+				continue
+			}
+			current.Developer = value
+		case "publisher":
+			if current == nil {
+				continue
+			}
+			current.Publisher = value
+		case "genre":
+			if current == nil {
+				continue
+			}
+			genres := strings.Split(value, ",")
+			for _, g := range genres {
+				trimmed := strings.TrimSpace(g)
+				if trimmed != "" {
+					current.Genres = append(current.Genres, trimmed)
+				}
+			}
+		case "release":
+			if current == nil {
+				continue
+			}
+			current.Release = strings.TrimSpace(value)
 		default:
 			// Ignore other keys for now.
 		}

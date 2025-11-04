@@ -42,6 +42,7 @@ retrog scan \
 - 递归遍历 `--dir` 下所有子目录，只要检测到 `metadata.pegasus.txt` 就会进行扫描；
 - 解析元数据、上传封面/截图/视频等媒体文件至 S3（命名为 `media/<md5><ext>`）；
 - 将清洗后的名称、描述、媒体信息写入 SQLite 的 `retro_game_meta_tab`；
+- 同步 `developer`、`publisher`、`genre`、`release` 等字段到 `ext_info`，发行时间自动转换为 Unix 时间戳；
 - 对仅包含单一 ROM 的 `.zip` 文件，同时记录压缩包 MD5 与内部文件 MD5 两条元数据。
 
 ### `query`
