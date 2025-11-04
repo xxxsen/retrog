@@ -57,13 +57,13 @@ retrog query \
 - 缺失的哈希会以日志方式提示，但不会终止命令；
 - `--meta` 可覆盖配置内的 SQLite 路径。
 
-### `clean-bucket`
+### `clean`
 
 ```bash
-retrog clean-bucket --force
+retrog clean --force
 ```
 
-- 调用 S3 客户端清空桶内对象；
+- 调用 S3 客户端清空桶内对象，并删除 meta.db 中的所有记录；
 - 为防误操作，必须显式携带 `--force`。
 
 ### `normalize`
