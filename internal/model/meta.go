@@ -14,7 +14,7 @@ type Entry struct {
 	Developer string       `json:"developer,omitempty"`
 	Publisher string       `json:"publisher,omitempty"`
 	Genres    []string     `json:"genres,omitempty"`
-	ReleaseAt int64        `json:"release_at"`
+	ReleaseAt int64        `json:"release_at,omitempty"`
 }
 
 // MediaEntry captures a single media asset description.
@@ -30,7 +30,7 @@ type extInfoPayload struct {
 	Developer string       `json:"developer,omitempty"`
 	Publisher string       `json:"publisher,omitempty"`
 	Genres    []string     `json:"genres,omitempty"`
-	ReleaseAt int64        `json:"release_at"`
+	ReleaseAt int64        `json:"release_at,omitempty"`
 }
 
 // MarshalExtInfo converts entry attachments into ext_info JSON.
