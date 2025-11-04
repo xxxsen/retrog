@@ -7,6 +7,7 @@
 - 把整理后的 ROM 元信息写入本地 SQLite；
 - 根据 ROM 哈希输出结构化 JSON 数据；
 - 在调试阶段一键清空对象存储。
+- 把 meta.db 中的元数据回填至 retrom PostgreSQL 数据库。
 
 工程使用 Go 开发，模块名为 `github.com/xxxsen/retrog`，支持 `go install` 直接安装。
 
@@ -169,6 +170,21 @@ retrog clean-bucket --force
 
 - 调用存储客户端的 `ClearBucket` 方法删除桶内全部对象，主要用于测试环境重置。
 - 必须显式传入 `--force`，否则命令会直接返回错误。
+
+### 4. `patch-retrom-meta`
+
+```
+retrog patch-retrom-meta \
+  --dblink "postgres://user:pass@host:5432/retrom?sslmode=disable" \
+  [--root-mapping "/data/roms:/app/library"] \
+  [--dryrun]
+```
+
+- 按 `game_files` / `games` 记录计算 ROM MD5，从本地 `meta.db` 查找元数据。
+- 命中后将 `name`、`description`、封面/截图/视频等信息写入 retrom 的 `game_metadata`（`ON CONFLICT` upsert）。
+- `--root-mapping` 用于将容器内路径映射为宿主机真实路径（格式 `host:container`），便于读取文件计算 MD5；未提供时使用原始路径。
+- `--dryrun` 仅打印将执行的插入/更新动作，不对 PostgreSQL 写入。
+- 可用于补齐缺失的元数据，维持 retrom 库与 meta.db 的一致性。
 
 ---
 

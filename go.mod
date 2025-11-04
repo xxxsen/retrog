@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.14
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.55.0
 	github.com/didi/gendry v1.8.2
+	github.com/lib/pq v1.10.9
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.9
 	github.com/xxxsen/common v0.1.27
