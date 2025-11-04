@@ -65,6 +65,16 @@ retrog clean-bucket --force
 - 调用 S3 客户端清空桶内对象；
 - 为防误操作，必须显式携带 `--force`。
 
+### `normalize`
+
+```bash
+retrog normalize --dir ./roms/gba
+```
+
+- 仅处理指定平台目录的顶层文件；
+- 若检测到诸如 `xxx.gb` 直接位于平台目录下，会创建 `xxx/` 并移动到 `xxx/xxx.gb`；
+- 已位于目录中的游戏会被跳过。
+
 ### `patch-retrom-meta`
 
 ```bash
