@@ -250,6 +250,14 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 		full := filepath.Join(categoryPath, rel)
 		info, err := os.Stat(full)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				logger := logutil.GetLogger(ctx)
+				logger.Warn("rom file missing, skip",
+					zap.String("path", full),
+					zap.String("game", gameDef.Name),
+				)
+				continue
+			}
 			return nil, fmt.Errorf("stat rom file %s: %w", full, err)
 		}
 		if info.IsDir() {
