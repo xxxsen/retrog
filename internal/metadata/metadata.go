@@ -28,8 +28,8 @@ type Document struct {
 	Games      []Game
 }
 
-// Parse reads a Pegasus metadata file from disk.
-func Parse(path string) (*Document, error) {
+// ParseMetadataFile reads a Pegasus metadata file from disk.
+func ParseMetadataFile(path string) (*Document, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open metadata %s: %w", path, err)

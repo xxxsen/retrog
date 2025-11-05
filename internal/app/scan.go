@@ -176,7 +176,7 @@ func (c *ScanCommand) processMetadata(ctx context.Context, store storage.Client,
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing metadata", zap.String("path", metaPath))
 
-	doc, err := metadata.Parse(metaPath)
+	doc, err := metadata.ParseMetadataFile(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse metadata %s: %w", metaPath, err)
 	}
@@ -205,7 +205,7 @@ func (c *ScanCommand) processGamelist(ctx context.Context, store storage.Client,
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing gamelist", zap.String("path", gamelistPath))
 
-	doc, err := metadata.ParseGamelist(gamelistPath)
+	doc, err := metadata.ParseGamelistFile(gamelistPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse gamelist %s: %w", gamelistPath, err)
 	}

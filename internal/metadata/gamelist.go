@@ -23,7 +23,7 @@ type GamelistEntry struct {
 	ReleaseDate string   `xml:"releasedate"`
 }
 
-func ParseGamelist(path string) (*GamelistDocument, error) {
+func ParseGamelistFile(path string) (*GamelistDocument, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open gamelist %s: %w", path, err)

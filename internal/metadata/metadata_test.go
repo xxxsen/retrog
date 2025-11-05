@@ -27,7 +27,7 @@ description:
 		t.Fatalf("write metadata: %v", err)
 	}
 
-	doc, err := Parse(metaPath)
+	doc, err := ParseMetadataFile(metaPath)
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -71,7 +71,7 @@ genre:
 		t.Fatalf("write metadata: %v", err)
 	}
 
-	doc, err := Parse(metaPath)
+	doc, err := ParseMetadataFile(metaPath)
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestParseMetadataErrors(t *testing.T) {
 				t.Fatalf("write metadata: %v", err)
 			}
 
-			if _, err := Parse(metaPath); err == nil {
+			if _, err := ParseMetadataFile(metaPath); err == nil {
 				t.Fatalf("expected error but got nil")
 			}
 		})
