@@ -9,7 +9,7 @@ import (
 var defaultDB database.IDatabase
 
 const (
-	createTableSQL = `
+	createMetaTableSQL = `
 CREATE TABLE IF NOT EXISTS retro_game_meta_tab (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	rom_hash VARCHAR(32) NOT NULL UNIQUE,
@@ -19,6 +19,14 @@ CREATE TABLE IF NOT EXISTS retro_game_meta_tab (
 	create_time BIGINT NOT NULL,
 	update_time BIGINT NOT NULL,
 	ext_info VARCHAR(2048) NOT NULL
+);`
+	createHashCacheTableSQL = `
+CREATE TABLE IF NOT EXISTS file_hash_cache_tab (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	location VARCHAR(1024) NOT NULL UNIQUE,
+	create_time BIGINT NOT NULL,
+	file_modtime BIGINT NOT NULL,
+	hash VARCHAR(32) NOT NULL
 );`
 )
 
@@ -34,6 +42,14 @@ func Default() database.IDatabase {
 
 // EnsureSchema initialises required tables and indexes.
 func EnsureSchema(ctx context.Context, db database.IDatabase) error {
-	_, err := db.ExecContext(ctx, createTableSQL)
-	return err
+	stmts := []string{
+		createMetaTableSQL,
+		createHashCacheTableSQL,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -9,7 +10,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	appdb "github.com/xxxsen/retrog/internal/db"
 )
+
+const largeFileHashThreshold int64 = 50 * 1024 * 1024
 
 var (
 	whitespaceCollapseRegex = regexp.MustCompile(`\s+`)
@@ -19,6 +24,50 @@ var (
 )
 
 func fileMD5(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat file for hash %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("hash file %s: is a directory", path)
+	}
+
+	if info.Size() <= largeFileHashThreshold {
+		return computeFileMD5(path)
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+	cleanPath := filepath.Clean(absPath)
+	modTime := info.ModTime().UnixNano()
+
+	cacheDAO := appdb.NewFileHashCacheDAO()
+	ctx := context.Background()
+	if cacheDAO != nil {
+		if hash, ok, err := cacheDAO.Lookup(ctx, cleanPath, modTime); err == nil && ok {
+			return hash, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+
+	hash, err := computeFileMD5(path)
+	if err != nil {
+		return "", err
+	}
+
+	if cacheDAO != nil {
+		if err := cacheDAO.Upsert(ctx, cleanPath, modTime, hash); err != nil {
+			return "", err
+		}
+	}
+
+	return hash, nil
+}
+
+func computeFileMD5(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("open file for hash %s: %w", path, err)
