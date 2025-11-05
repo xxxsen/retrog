@@ -50,7 +50,7 @@ func (c *ExportCommand) PreRun(ctx context.Context) error {
 func (c *ExportCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 	store := storage.DefaultClient()
-	dao := appdb.NewMetaDAO()
+	dao := appdb.MetaDao
 
 	tmpDir, err := os.MkdirTemp("", "retrog-export-")
 	if err != nil {

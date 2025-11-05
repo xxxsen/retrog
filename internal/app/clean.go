@@ -51,7 +51,7 @@ func (c *CleanCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	dao := appdb.NewMetaDAO()
+	dao := appdb.MetaDao
 	if err := dao.ClearAll(ctx); err != nil {
 		return err
 	}

@@ -6,29 +6,31 @@ import (
 	"time"
 
 	"github.com/didi/gendry/builder"
-	"github.com/xxxsen/common/database"
 )
 
 const hashCacheTableName = "file_hash_cache_tab"
 
-// FileHashCacheDAO provides helpers to read and write file hash cache entries.
-type FileHashCacheDAO struct {
-	db database.IDatabase
+var FileHashCacheDao = newFileHashCacheDao()
+
+type fileHashCacheDao struct {
+	dbGetter DatabaseGetter
 }
 
-// NewFileHashCacheDAO builds a cache DAO using the default database.
-func NewFileHashCacheDAO() *FileHashCacheDAO {
-	return &FileHashCacheDAO{db: Default()}
+func newFileHashCacheDao() *fileHashCacheDao {
+	return &fileHashCacheDao{
+		dbGetter: Default,
+	}
 }
 
 // Lookup returns a cached hash for the location when the file modification time matches.
-func (dao *FileHashCacheDAO) Lookup(ctx context.Context, location string, modTime int64) (string, bool, error) {
-	if dao.db == nil {
+func (dao *fileHashCacheDao) Lookup(ctx context.Context, location string, modTime int64) (string, bool, error) {
+	db := dao.dbGetter()
+	if db == nil {
 		return "", false, nil
 	}
 
 	const query = `SELECT hash, file_modtime FROM file_hash_cache_tab WHERE location = ? LIMIT 1`
-	rows, err := dao.db.QueryContext(ctx, query, location)
+	rows, err := db.QueryContext(ctx, query, location)
 	if err != nil {
 		return "", false, fmt.Errorf("query hash cache: %w", err)
 	}
@@ -52,8 +54,9 @@ func (dao *FileHashCacheDAO) Lookup(ctx context.Context, location string, modTim
 }
 
 // Upsert stores or updates the cached hash for the provided location.
-func (dao *FileHashCacheDAO) Upsert(ctx context.Context, location string, modTime int64, hash string) error {
-	if dao.db == nil {
+func (dao *fileHashCacheDao) Upsert(ctx context.Context, location string, modTime int64, hash string) error {
+	db := dao.dbGetter()
+	if db == nil {
 		return fmt.Errorf("hash cache dao not initialised")
 	}
 
@@ -68,7 +71,7 @@ func (dao *FileHashCacheDAO) Upsert(ctx context.Context, location string, modTim
 	if err != nil {
 		return err
 	}
-	if _, err := dao.db.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
+	if _, err := db.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
 		if !isUniqueConstraintError(err) {
 			return fmt.Errorf("insert hash cache: %w", err)
 		}
@@ -82,7 +85,7 @@ func (dao *FileHashCacheDAO) Upsert(ctx context.Context, location string, modTim
 		if err != nil {
 			return err
 		}
-		if _, err := dao.db.ExecContext(ctx, updateSQL, updateArgs...); err != nil {
+		if _, err := db.ExecContext(ctx, updateSQL, updateArgs...); err != nil {
 			return fmt.Errorf("update hash cache: %w", err)
 		}
 	}

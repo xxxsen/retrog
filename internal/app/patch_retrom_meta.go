@@ -80,7 +80,7 @@ func (c *PatchRetromMetaCommand) PreRun(ctx context.Context) error {
 }
 
 func (c *PatchRetromMetaCommand) Run(ctx context.Context) error {
-	sqliteDAO := appdb.NewMetaDAO()
+	sqliteDAO := appdb.MetaDao
 	retromDAO, err := appdb.NewRetromMetaDAO(c.dblink)
 	if err != nil {
 		return err

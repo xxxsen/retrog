@@ -59,7 +59,7 @@ func (c *QueryCommand) Run(ctx context.Context) error {
 	result := make(map[string]model.Entry)
 	logger := logutil.GetLogger(ctx)
 
-	dao := appdb.NewMetaDAO()
+	dao := appdb.MetaDao
 	entries, missing, err := dao.FetchByHashes(ctx, c.hashes)
 	if err != nil {
 		return err

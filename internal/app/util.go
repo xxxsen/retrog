@@ -43,7 +43,7 @@ func fileMD5(path string) (string, error) {
 	cleanPath := filepath.Clean(absPath)
 	modTime := info.ModTime().UnixNano()
 
-	cacheDAO := appdb.NewFileHashCacheDAO()
+	cacheDAO := appdb.FileHashCacheDao
 	ctx := context.Background()
 	if cacheDAO != nil {
 		if hash, ok, err := cacheDAO.Lookup(ctx, cleanPath, modTime); err == nil && ok {

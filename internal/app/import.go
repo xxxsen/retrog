@@ -51,7 +51,7 @@ func (c *ImportCommand) PreRun(ctx context.Context) error {
 func (c *ImportCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 	store := storage.DefaultClient()
-	dao := appdb.NewMetaDAO()
+	dao := appdb.MetaDao
 
 	tmpDir, err := os.MkdirTemp("", "retrog-import-")
 	if err != nil {

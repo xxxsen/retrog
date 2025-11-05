@@ -19,20 +19,36 @@ const (
 	upsertBatchSize = 50
 )
 
-// MetaDAO exposes helpers for reading and writing ROM metadata records.
+var MetaDao = newMetaDAO()
+
 type MetaDAO struct {
-	db database.IDatabase
+	dbGetter DatabaseGetter
 }
 
-// NewMetaDAO builds a DAO using the globally configured database.
-func NewMetaDAO() *MetaDAO {
-	return &MetaDAO{db: Default()}
+func newMetaDAO() *MetaDAO {
+	return &MetaDAO{dbGetter: Default}
+}
+
+func (dao *MetaDAO) acquireDB() (database.IDatabase, error) {
+	if dao == nil {
+		return nil, fmt.Errorf("meta dao is nil")
+	}
+	db := dao.dbGetter()
+	if db == nil {
+		return nil, fmt.Errorf("meta dao not initialised")
+	}
+	return db, nil
 }
 
 // Upsert inserts or updates metadata records, returning the number of inserted and updated rows.
 func (dao *MetaDAO) Upsert(ctx context.Context, records map[string]model.Entry) (inserted int, updated int, err error) {
 	if len(records) == 0 {
 		return 0, 0, nil
+	}
+
+	db, err := dao.acquireDB()
+	if err != nil {
+		return 0, 0, err
 	}
 
 	keys := make([]string, 0, len(records))
@@ -48,7 +64,7 @@ func (dao *MetaDAO) Upsert(ctx context.Context, records map[string]model.Entry) 
 		}
 		batchKeys := keys[start:end]
 
-		err = dao.db.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
+		err = db.OnTransation(ctx, func(ctx context.Context, tx database.IQueryExecer) error {
 			for _, hash := range batchKeys {
 				record := records[hash]
 				extJSON, err := record.MarshalExtInfo()
@@ -107,6 +123,11 @@ func (dao *MetaDAO) InsertOnly(ctx context.Context, records map[string]model.Ent
 		return 0, 0, nil
 	}
 
+	db, err := dao.acquireDB()
+	if err != nil {
+		return 0, 0, err
+	}
+
 	keys := make([]string, 0, len(records))
 	for hash := range records {
 		keys = append(keys, hash)
@@ -134,7 +155,7 @@ func (dao *MetaDAO) InsertOnly(ctx context.Context, records map[string]model.Ent
 		if err != nil {
 			return inserted, updated, err
 		}
-		if _, err := dao.db.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
+		if _, err := db.ExecContext(ctx, insertSQL, insertArgs...); err != nil {
 			if isUniqueConstraintError(err) {
 				updated++
 				continue
@@ -155,12 +176,17 @@ func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[str
 		return result, missing, nil
 	}
 
+	db, err := dao.acquireDB()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	where := map[string]interface{}{"rom_hash in": hashes}
 	selectSQL, args, err := builder.BuildSelect(metaTableName, where, []string{"rom_hash", "rom_name", "rom_desc", "rom_size", "ext_info"})
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, err := dao.db.QueryContext(ctx, selectSQL, args...)
+	rows, err := db.QueryContext(ctx, selectSQL, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -196,7 +222,11 @@ func (dao *MetaDAO) FetchByHashes(ctx context.Context, hashes []string) (map[str
 }
 
 func (dao *MetaDAO) ClearAll(ctx context.Context) error {
-	_, err := dao.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", metaTableName))
+	db, err := dao.acquireDB()
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", metaTableName))
 	return err
 }
 
@@ -210,8 +240,14 @@ func (dao *MetaDAO) FetchPage(ctx context.Context, lastID int64, limit int) ([]S
 	if limit <= 0 {
 		limit = 200
 	}
+
+	db, err := dao.acquireDB()
+	if err != nil {
+		return nil, err
+	}
+
 	query := fmt.Sprintf("SELECT id, rom_hash, rom_name, rom_desc, rom_size, ext_info FROM %s WHERE id > ? ORDER BY id ASC LIMIT ?", metaTableName)
-	rows, err := dao.db.QueryContext(ctx, query, lastID, limit)
+	rows, err := db.QueryContext(ctx, query, lastID, limit)
 	if err != nil {
 		return nil, err
 	}
