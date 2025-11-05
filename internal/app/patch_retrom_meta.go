@@ -129,7 +129,7 @@ func (c *PatchRetromMetaCommand) Run(ctx context.Context) error {
 		}
 
 		entry := metaMap[hash]
-		payload := buildMetaPayload(ctx, entry)
+		payload := c.buildMetaPayload(ctx, entry)
 
 		exists, err := retromDAO.GameMetadataExists(ctx, record.GameID)
 		if err != nil {
@@ -212,12 +212,12 @@ func (c *PatchRetromMetaCommand) resolveHostPath(containerPath string) (string, 
 	return filepath.Join(c.hostRoot, filepath.FromSlash(rel)), true
 }
 
-func buildMetaPayload(ctx context.Context, entry model.Entry) appdb.RetromMetaPayload {
+func (c *PatchRetromMetaCommand) buildMetaPayload(ctx context.Context, entry model.Entry) appdb.RetromMetaPayload {
 	var cover, background, icon sql.NullString
 	var videos, screenshots, artworks []string
 
 	for _, m := range entry.Media {
-		url := mediaURL(ctx, m)
+		url := c.mediaURL(ctx, m)
 		switch m.Type {
 		case "boxart", "boxfront":
 			if !cover.Valid {
@@ -261,7 +261,7 @@ func buildMetaPayload(ctx context.Context, entry model.Entry) appdb.RetromMetaPa
 	}
 }
 
-func mediaURL(ctx context.Context, m model.MediaEntry) string {
+func (c *PatchRetromMetaCommand) mediaURL(ctx context.Context, m model.MediaEntry) string {
 	key := m.Hash + m.Ext
 	return storage.DefaultClient().GetDownloadLink(ctx, key)
 }
