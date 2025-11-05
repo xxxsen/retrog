@@ -180,7 +180,13 @@ func (c *PatchRommMetaCommand) Run(ctx context.Context) error {
 
 				artwork, err := downloadArtwork(ctx, store, *coverMedia)
 				if err != nil {
-					return err
+					logger.Error("download artwork failed",
+						zap.Int("rom_id", romItem.ID),
+						zap.String("md5", hash),
+						zap.Error(err),
+					)
+					skipped++
+					continue
 				}
 				if artwork == nil {
 					missingCover++
@@ -195,7 +201,13 @@ func (c *PatchRommMetaCommand) Run(ctx context.Context) error {
 				}
 
 				if err := client.UpdateRom(ctx, romItem.ID, updateReq); err != nil {
-					return fmt.Errorf("update rom %d: %w", romItem.ID, err)
+					logger.Error("update rom failed",
+						zap.Int("rom_id", romItem.ID),
+						zap.String("md5", hash),
+						zap.Error(err),
+					)
+					skipped++
+					continue
 				}
 				updated++
 			}
