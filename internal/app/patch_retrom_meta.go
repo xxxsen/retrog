@@ -12,7 +12,6 @@ import (
 	"github.com/xxxsen/retrog/internal/model"
 	"github.com/xxxsen/retrog/internal/storage"
 
-	"github.com/lib/pq"
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
@@ -81,79 +80,58 @@ func (c *PatchRetromMetaCommand) PreRun(ctx context.Context) error {
 }
 
 func (c *PatchRetromMetaCommand) Run(ctx context.Context) error {
-	dao := appdb.NewMetaDAO()
-
-	db, err := sql.Open("postgres", c.dblink)
+	sqliteDAO := appdb.NewMetaDAO()
+	retromDAO, err := appdb.NewRetromMetaDAO(c.dblink)
 	if err != nil {
-		return fmt.Errorf("open postgres: %w", err)
+		return err
 	}
-	defer db.Close()
-
-	const query = `
-SELECT gf.game_id, gf.path
-FROM game_files gf
-JOIN games g ON g.id = gf.game_id
-WHERE NOT gf.is_deleted AND NOT g.is_deleted`
-
-	rows, err := db.QueryContext(ctx, query)
-	if err != nil {
-		return fmt.Errorf("query game files: %w", err)
-	}
-	defer rows.Close()
+	defer retromDAO.Close()
 
 	logger := logutil.GetLogger(ctx)
-	type result struct {
-		gameID int
-		path   string
-	}
 
 	var processed, inserted, updated, skipped int
 
-	for rows.Next() {
-		var r result
-		if err := rows.Scan(&r.gameID, &r.path); err != nil {
-			return fmt.Errorf("scan game files: %w", err)
-		}
+	err = retromDAO.ForEachActiveGameFile(ctx, func(record appdb.RetromGameFile) error {
 		processed++
 
-		hostPath, ok := c.resolveHostPath(r.path)
+		hostPath, ok := c.resolveHostPath(record.Path)
 		if !ok {
 			logger.Warn("path not under container root",
-				zap.Int("game_id", r.gameID),
-				zap.String("path", r.path),
+				zap.Int("game_id", record.GameID),
+				zap.String("path", record.Path),
 			)
 			skipped++
-			continue
+			return nil
 		}
 
 		hash, err := fileMD5(hostPath)
 		if err != nil {
 			logger.Warn("failed to compute md5",
-				zap.Int("game_id", r.gameID),
+				zap.Int("game_id", record.GameID),
 				zap.String("path", hostPath),
 				zap.Error(err),
 			)
 			skipped++
-			continue
+			return nil
 		}
 
-		metaMap, missing, err := dao.FetchByHashes(ctx, []string{hash})
+		metaMap, missing, err := sqliteDAO.FetchByHashes(ctx, []string{hash})
 		if err != nil {
 			return fmt.Errorf("fetch meta for hash %s: %w", hash, err)
 		}
 		if len(missing) > 0 {
 			logger.Warn("meta not found for hash",
-				zap.Int("game_id", r.gameID),
+				zap.Int("game_id", record.GameID),
 				zap.String("hash", hash),
 			)
 			skipped++
-			continue
+			return nil
 		}
 
 		entry := metaMap[hash]
 		payload := buildMetaPayload(ctx, entry)
 
-		exists, err := isGameMetadataExists(ctx, db, r.gameID)
+		exists, err := retromDAO.GameMetadataExists(ctx, record.GameID)
 		if err != nil {
 			return err
 		}
@@ -166,7 +144,7 @@ WHERE NOT gf.is_deleted AND NOT g.is_deleted`
 				action = "skip"
 			}
 			logger.Info("dryrun patch metadata",
-				zap.Int("game_id", r.gameID),
+				zap.Int("game_id", record.GameID),
 				zap.String("hash", hash),
 				zap.String("action", action),
 				zap.Any("meta", payload),
@@ -174,37 +152,38 @@ WHERE NOT gf.is_deleted AND NOT g.is_deleted`
 			if action == "skip" {
 				skipped++
 			}
-			continue
+			return nil
 		}
 
 		if exists && !c.allowUpdate {
 			logger.Info("skip existing metadata",
-				zap.Int("game_id", r.gameID),
+				zap.Int("game_id", record.GameID),
 				zap.String("hash", hash),
 			)
 			skipped++
-			continue
+			return nil
 		}
 
 		if c.allowUpdate {
-			isInsert, err := upsertGameMetadata(ctx, db, r.gameID, payload)
+			isInsert, err := retromDAO.UpsertGameMetadata(ctx, record.GameID, payload)
 			if err != nil {
-				return fmt.Errorf("upsert metadata for game %d: %w", r.gameID, err)
+				return err
 			}
 			if isInsert {
 				inserted++
 			} else {
 				updated++
 			}
-		} else {
-			if err := insertGameMetadata(ctx, db, r.gameID, payload); err != nil {
-				return fmt.Errorf("insert metadata for game %d: %w", r.gameID, err)
-			}
-			inserted++
+			return nil
 		}
-	}
 
-	if err := rows.Err(); err != nil {
+		if err := retromDAO.InsertGameMetadata(ctx, record.GameID, payload); err != nil {
+			return err
+		}
+		inserted++
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 
@@ -233,19 +212,7 @@ func (c *PatchRetromMetaCommand) resolveHostPath(containerPath string) (string, 
 	return filepath.Join(c.hostRoot, filepath.FromSlash(rel)), true
 }
 
-type metaPayload struct {
-	name           sql.NullString
-	description    sql.NullString
-	coverURL       sql.NullString
-	backgroundURL  sql.NullString
-	iconURL        sql.NullString
-	links          []string
-	videoURLs      []string
-	screenshotURLs []string
-	artworkURLs    []string
-}
-
-func buildMetaPayload(ctx context.Context, entry model.Entry) metaPayload {
+func buildMetaPayload(ctx context.Context, entry model.Entry) appdb.RetromMetaPayload {
 	var cover, background, icon sql.NullString
 	var videos, screenshots, artworks []string
 
@@ -281,100 +248,22 @@ func buildMetaPayload(ctx context.Context, entry model.Entry) metaPayload {
 		artworks = make([]string, 0)
 	}
 
-	return metaPayload{
-		name:           sql.NullString{String: entry.Name, Valid: entry.Name != ""},
-		description:    sql.NullString{String: entry.Desc, Valid: entry.Desc != ""},
-		coverURL:       cover,
-		backgroundURL:  background,
-		iconURL:        icon,
-		links:          make([]string, 0),
-		videoURLs:      videos,
-		screenshotURLs: screenshots,
-		artworkURLs:    artworks,
+	return appdb.RetromMetaPayload{
+		Name:           sql.NullString{String: entry.Name, Valid: entry.Name != ""},
+		Description:    sql.NullString{String: entry.Desc, Valid: entry.Desc != ""},
+		CoverURL:       cover,
+		BackgroundURL:  background,
+		IconURL:        icon,
+		Links:          make([]string, 0),
+		VideoURLs:      videos,
+		ScreenshotURLs: screenshots,
+		ArtworkURLs:    artworks,
 	}
 }
 
 func mediaURL(ctx context.Context, m model.MediaEntry) string {
 	key := m.Hash + m.Ext
 	return storage.DefaultClient().GetDownloadLink(ctx, key)
-}
-
-func upsertGameMetadata(ctx context.Context, db *sql.DB, gameID int, payload metaPayload) (bool, error) {
-	const stmt = `
-INSERT INTO game_metadata (
-	game_id, name, description, cover_url, background_url, icon_url,
-	links, video_urls, screenshot_urls, artwork_urls, created_at, updated_at
-) VALUES (
-	$1, $2, $3, $4, $5, $6,
-	$7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-) ON CONFLICT (game_id) DO UPDATE SET
-	name = EXCLUDED.name,
-	description = EXCLUDED.description,
-	cover_url = EXCLUDED.cover_url,
-	background_url = EXCLUDED.background_url,
-	icon_url = EXCLUDED.icon_url,
-	links = EXCLUDED.links,
-	video_urls = EXCLUDED.video_urls,
-	screenshot_urls = EXCLUDED.screenshot_urls,
-	artwork_urls = EXCLUDED.artwork_urls,
-	updated_at = CURRENT_TIMESTAMP
-RETURNING (xmax = 0)`
-
-	var inserted bool
-	err := db.QueryRowContext(ctx, stmt,
-		gameID,
-		payload.name,
-		payload.description,
-		payload.coverURL,
-		payload.backgroundURL,
-		payload.iconURL,
-		pq.Array(payload.links),
-		pq.Array(payload.videoURLs),
-		pq.Array(payload.screenshotURLs),
-		pq.Array(payload.artworkURLs),
-	).Scan(&inserted)
-	if err != nil {
-		return false, err
-	}
-	return inserted, nil
-}
-
-func insertGameMetadata(ctx context.Context, db *sql.DB, gameID int, payload metaPayload) error {
-	const stmt = `
-INSERT INTO game_metadata (
-	game_id, name, description, cover_url, background_url, icon_url,
-	links, video_urls, screenshot_urls, artwork_urls, created_at, updated_at
-) VALUES (
-	$1, $2, $3, $4, $5, $6,
-	$7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-)`
-
-	_, err := db.ExecContext(ctx, stmt,
-		gameID,
-		payload.name,
-		payload.description,
-		payload.coverURL,
-		payload.backgroundURL,
-		payload.iconURL,
-		pq.Array(payload.links),
-		pq.Array(payload.videoURLs),
-		pq.Array(payload.screenshotURLs),
-		pq.Array(payload.artworkURLs),
-	)
-	return err
-}
-
-func isGameMetadataExists(ctx context.Context, db *sql.DB, gameID int) (bool, error) {
-	const stmt = `SELECT 1 FROM game_metadata WHERE game_id = $1 LIMIT 1`
-	var dummy int
-	err := db.QueryRowContext(ctx, stmt, gameID).Scan(&dummy)
-	if err == nil {
-		return true, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	return false, err
 }
 
 func init() {
