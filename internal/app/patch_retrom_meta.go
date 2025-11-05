@@ -153,7 +153,7 @@ WHERE NOT gf.is_deleted AND NOT g.is_deleted`
 		entry := metaMap[hash]
 		payload := buildMetaPayload(ctx, entry)
 
-		exists, err := gameMetadataExists(ctx, db, r.gameID)
+		exists, err := isGameMetadataExists(ctx, db, r.gameID)
 		if err != nil {
 			return err
 		}
@@ -364,7 +364,7 @@ INSERT INTO game_metadata (
 	return err
 }
 
-func gameMetadataExists(ctx context.Context, db *sql.DB, gameID int) (bool, error) {
+func isGameMetadataExists(ctx context.Context, db *sql.DB, gameID int) (bool, error) {
 	const stmt = `SELECT 1 FROM game_metadata WHERE game_id = $1 LIMIT 1`
 	var dummy int
 	err := db.QueryRowContext(ctx, stmt, gameID).Scan(&dummy)
