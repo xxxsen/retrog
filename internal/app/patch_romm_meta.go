@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -300,13 +301,25 @@ func downloadArtwork(ctx context.Context, store storage.Client, media model.Medi
 	if err == nil && info.Size() == 0 {
 		return nil, fmt.Errorf("artwork %s is empty", key)
 	}
-	contentType := mime.TypeByExtension(strings.ToLower(media.Ext))
+	detectedType := http.DetectContentType(data)
+	contentType := detectedType
+	if strings.TrimSpace(contentType) == "" || contentType == "application/octet-stream" {
+		contentType = mime.TypeByExtension(strings.ToLower(media.Ext))
+	}
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
+	filename := key
+	if extList, _ := mime.ExtensionsByType(contentType); len(extList) > 0 {
+		chosen := extList[0]
+		if chosen != "" {
+			filename = media.Hash + chosen
+		}
+	}
+
 	return &romm.UpdateRomArtwork{
-		Filename:    key,
+		Filename:    filename,
 		ContentType: contentType,
 		Data:        data,
 	}, nil
