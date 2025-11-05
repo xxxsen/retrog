@@ -23,7 +23,7 @@ var (
 	hyphenCollapseRegex     = regexp.MustCompile(`-+`)
 )
 
-func fileMD5(path string) (string, error) {
+func readFileMD5WithCache(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat file for hash %s: %w", path, err)
@@ -43,25 +43,22 @@ func fileMD5(path string) (string, error) {
 	cleanPath := filepath.Clean(absPath)
 	modTime := info.ModTime().UnixNano()
 
-	cacheDAO := appdb.FileHashCacheDao
 	ctx := context.Background()
-	if cacheDAO != nil {
-		if hash, ok, err := cacheDAO.Lookup(ctx, cleanPath, modTime); err == nil && ok {
-			return hash, nil
-		} else if err != nil {
-			return "", err
-		}
+	hash, ok, err := appdb.FileHashCacheDao.Lookup(ctx, cleanPath, modTime)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return hash, nil
 	}
 
-	hash, err := computeFileMD5(path)
+	hash, err = computeFileMD5(path)
 	if err != nil {
 		return "", err
 	}
 
-	if cacheDAO != nil {
-		if err := cacheDAO.Upsert(ctx, cleanPath, modTime, hash); err != nil {
-			return "", err
-		}
+	if err := appdb.FileHashCacheDao.Upsert(ctx, cleanPath, modTime, hash); err != nil {
+		return "", err
 	}
 
 	return hash, nil

@@ -263,7 +263,7 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 		if info.IsDir() {
 			continue
 		}
-		md5sum, err := fileMD5(full)
+		md5sum, err := readFileMD5WithCache(full)
 		if err != nil {
 			return nil, err
 		}
@@ -293,7 +293,7 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 		entries[md5sum] = baseEntry
 
 		if strings.EqualFold(filepath.Ext(full), ".zip") {
-			hash, size, ok, err := singleFileHashFromZip(full)
+			hash, size, ok, err := c.singleFileHashFromZip(full)
 			if err != nil {
 				return nil, err
 			}
@@ -314,7 +314,7 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 	logger := logutil.GetLogger(ctx)
 	entries := make(map[string]model.Entry)
 
-	romPath := resolveResourcePath(platformPath, game.Path)
+	romPath := c.resolveResourcePath(platformPath, game.Path)
 	if romPath == "" {
 		return entries, nil
 	}
@@ -332,14 +332,14 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 		return entries, nil
 	}
 
-	md5sum, err := fileMD5(romPath)
+	md5sum, err := readFileMD5WithCache(romPath)
 	if err != nil {
 		return nil, err
 	}
 
 	mediaPaths := map[string]string{
-		"boxart": resolveResourcePath(platformPath, game.Image),
-		"video":  resolveResourcePath(platformPath, game.Video),
+		"boxart": c.resolveResourcePath(platformPath, game.Image),
+		"video":  c.resolveResourcePath(platformPath, game.Video),
 	}
 	mediaMap, err := c.collectSpecifiedMedia(ctx, store, mediaPaths)
 	if err != nil {
@@ -363,7 +363,7 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 	entries[md5sum] = entry
 
 	if strings.EqualFold(filepath.Ext(romPath), ".zip") {
-		hash, size, ok, err := singleFileHashFromZip(romPath)
+		hash, size, ok, err := c.singleFileHashFromZip(romPath)
 		if err != nil {
 			return nil, err
 		}
@@ -402,7 +402,7 @@ func (c *ScanCommand) collectMedia(ctx context.Context, store storage.Client, ca
 		if err != nil {
 			return nil, fmt.Errorf("stat media file %s: %w", path, err)
 		}
-		md5sum, err := fileMD5(path)
+		md5sum, err := readFileMD5WithCache(path)
 		if err != nil {
 			return nil, err
 		}
@@ -434,7 +434,7 @@ func (c *ScanCommand) pickMediaSource(ctx context.Context, categoryPath, default
 	if defaultDir == "" {
 		return "", nil
 	}
-	return firstFileWithPrefix(defaultDir, baseName)
+	return c.firstFileWithPrefix(defaultDir, baseName)
 }
 
 func (c *ScanCommand) assetPathFromMetadata(categoryPath string, gameDef metadata.Game, mediaType string) string {
@@ -458,7 +458,7 @@ func (c *ScanCommand) assetPathFromMetadata(categoryPath string, gameDef metadat
 	return ""
 }
 
-func firstFileWithPrefix(dir, prefix string) (string, error) {
+func (c *ScanCommand) firstFileWithPrefix(dir, prefix string) (string, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
@@ -478,7 +478,7 @@ func firstFileWithPrefix(dir, prefix string) (string, error) {
 	return "", nil
 }
 
-func singleFileHashFromZip(path string) (string, int64, bool, error) {
+func (c *ScanCommand) singleFileHashFromZip(path string) (string, int64, bool, error) {
 	r, err := zip.OpenReader(path)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("open zip %s: %w", path, err)
@@ -515,7 +515,7 @@ func singleFileHashFromZip(path string) (string, int64, bool, error) {
 	return hash, size, true, nil
 }
 
-func resolveResourcePath(baseDir, pathValue string) string {
+func (c *ScanCommand) resolveResourcePath(baseDir, pathValue string) string {
 	val := strings.TrimSpace(pathValue)
 	if val == "" {
 		return ""
@@ -549,7 +549,7 @@ func (c *ScanCommand) collectSpecifiedMedia(ctx context.Context, store storage.C
 			continue
 		}
 
-		md5sum, err := fileMD5(path)
+		md5sum, err := readFileMD5WithCache(path)
 		if err != nil {
 			return nil, err
 		}

@@ -59,7 +59,7 @@ func (c *ImportCommand) Run(ctx context.Context) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := extractTarGz(c.input, tmpDir); err != nil {
+	if err := c.extractTarGz(c.input, tmpDir); err != nil {
 		return err
 	}
 
@@ -80,7 +80,7 @@ func (c *ImportCommand) Run(ctx context.Context) error {
 			Size:      rec.Size,
 			Developer: rec.Developer,
 			Publisher: rec.Publisher,
-			Genres:    splitGenres(rec.Genres),
+			Genres:    c.splitGenres(rec.Genres),
 			ReleaseAt: rec.ReleaseAt,
 			Media:     rec.Media,
 		}
@@ -143,7 +143,7 @@ func (c *ImportCommand) restoreMedia(ctx context.Context, store storage.Client, 
 	return nil
 }
 
-func extractTarGz(archivePath, dstDir string) error {
+func (c *ImportCommand) extractTarGz(archivePath, dstDir string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return fmt.Errorf("open archive %s: %w", archivePath, err)
@@ -200,7 +200,7 @@ func extractTarGz(archivePath, dstDir string) error {
 	return nil
 }
 
-func splitGenres(raw string) []string {
+func (c *ImportCommand) splitGenres(raw string) []string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil

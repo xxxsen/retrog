@@ -73,7 +73,7 @@ func (c *ExportCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	if err := archiveDirectory(tmpDir, c.output); err != nil {
+	if err := c.archiveDirectory(tmpDir, c.output); err != nil {
 		return err
 	}
 
@@ -154,7 +154,7 @@ func (c *ExportCommand) writeMetadata(path string, records []exportRecord) error
 	return os.WriteFile(path, data, 0o644)
 }
 
-func archiveDirectory(srcDir, outPath string) error {
+func (c *ExportCommand) archiveDirectory(srcDir, outPath string) error {
 	f, err := os.Create(outPath)
 	if err != nil {
 		return fmt.Errorf("create archive %s: %w", outPath, err)
