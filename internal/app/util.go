@@ -11,7 +11,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/xxxsen/common/logutil"
 	appdb "github.com/xxxsen/retrog/internal/db"
+	"go.uber.org/zap"
 )
 
 const largeFileHashThreshold int64 = 50 * 1024 * 1024
@@ -23,7 +25,7 @@ var (
 	hyphenCollapseRegex     = regexp.MustCompile(`-+`)
 )
 
-func readFileMD5WithCache(path string) (string, error) {
+func readFileMD5WithCache(ctx context.Context, path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat file for hash %s: %w", path, err)
@@ -41,17 +43,17 @@ func readFileMD5WithCache(path string) (string, error) {
 		absPath = path
 	}
 	cleanPath := filepath.Clean(absPath)
-	modTime := info.ModTime().UnixNano()
+	modTime := info.ModTime().UnixMilli()
 
-	ctx := context.Background()
 	hash, ok, err := appdb.FileHashCacheDao.Lookup(ctx, cleanPath, modTime)
 	if err != nil {
 		return "", err
 	}
 	if ok {
+		logutil.GetLogger(ctx).Debug("read file hash from cache", zap.String("file", path), zap.String("hash", hash))
 		return hash, nil
 	}
-
+	logutil.GetLogger(ctx).Info("big file cache compute", zap.String("file", path), zap.Int64("size", info.Size()))
 	hash, err = computeFileMD5(path)
 	if err != nil {
 		return "", err

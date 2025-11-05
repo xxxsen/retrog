@@ -104,7 +104,7 @@ func (c *PatchRetromMetaCommand) Run(ctx context.Context) error {
 			return nil
 		}
 
-		hash, err := readFileMD5WithCache(hostPath)
+		hash, err := readFileMD5WithCache(ctx, hostPath)
 		if err != nil {
 			logger.Warn("failed to compute md5",
 				zap.Int("game_id", record.GameID),

@@ -263,7 +263,7 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 		if info.IsDir() {
 			continue
 		}
-		md5sum, err := readFileMD5WithCache(full)
+		md5sum, err := readFileMD5WithCache(ctx, full)
 		if err != nil {
 			return nil, err
 		}
@@ -332,7 +332,7 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 		return entries, nil
 	}
 
-	md5sum, err := readFileMD5WithCache(romPath)
+	md5sum, err := readFileMD5WithCache(ctx, romPath)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,7 @@ func (c *ScanCommand) collectMedia(ctx context.Context, store storage.Client, ca
 		if err != nil {
 			return nil, fmt.Errorf("stat media file %s: %w", path, err)
 		}
-		md5sum, err := readFileMD5WithCache(path)
+		md5sum, err := readFileMD5WithCache(ctx, path)
 		if err != nil {
 			return nil, err
 		}
@@ -549,7 +549,7 @@ func (c *ScanCommand) collectSpecifiedMedia(ctx context.Context, store storage.C
 			continue
 		}
 
-		md5sum, err := readFileMD5WithCache(path)
+		md5sum, err := readFileMD5WithCache(ctx, path)
 		if err != nil {
 			return nil, err
 		}
