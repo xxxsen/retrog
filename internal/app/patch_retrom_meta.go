@@ -21,6 +21,7 @@ import (
 type PatchRetromMetaCommand struct {
 	dblink        string
 	dryRun        bool
+	allowUpdate   bool
 	rootMapping   string
 	hostRoot      string
 	containerRoot string
@@ -40,6 +41,7 @@ func NewPatchRetromMetaCommand() *PatchRetromMetaCommand {
 func (c *PatchRetromMetaCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dblink, "dblink", "", "PostgreSQL 连接字符串")
 	f.BoolVar(&c.dryRun, "dryrun", false, "测试模式，只打印操作不写入数据库")
+	f.BoolVar(&c.allowUpdate, "allow-update", false, "允许更新已存在的元数据，默认只新增")
 	f.StringVar(&c.rootMapping, "root-mapping", "", "路径映射，格式为 \"{host-root}:{container-root}\"，留空则使用原始路径")
 }
 
@@ -64,6 +66,7 @@ func (c *PatchRetromMetaCommand) PreRun(ctx context.Context) error {
 	fields := []zap.Field{
 		zap.String("dblink", c.dblink),
 		zap.Bool("dry_run", c.dryRun),
+		zap.Bool("allow_update", c.allowUpdate),
 	}
 	if c.useMapping {
 		fields = append(fields,
@@ -150,24 +153,54 @@ WHERE NOT gf.is_deleted AND NOT g.is_deleted`
 		entry := metaMap[hash]
 		payload := buildMetaPayload(ctx, entry)
 
+		exists, err := gameMetadataExists(ctx, db, r.gameID)
+		if err != nil {
+			return err
+		}
+
 		if c.dryRun {
+			action := "update"
+			if !exists {
+				action = "insert"
+			} else if !c.allowUpdate {
+				action = "skip"
+			}
 			logger.Info("dryrun patch metadata",
 				zap.Int("game_id", r.gameID),
 				zap.String("hash", hash),
+				zap.String("action", action),
 				zap.Any("meta", payload),
 			)
+			if action == "skip" {
+				skipped++
+			}
 			continue
 		}
 
-		isInsert, err := upsertGameMetadata(ctx, db, r.gameID, payload)
-		if err != nil {
-			return fmt.Errorf("upsert metadata for game %d: %w", r.gameID, err)
+		if exists && !c.allowUpdate {
+			logger.Info("skip existing metadata",
+				zap.Int("game_id", r.gameID),
+				zap.String("hash", hash),
+			)
+			skipped++
+			continue
 		}
 
-		if isInsert {
-			inserted++
+		if c.allowUpdate {
+			isInsert, err := upsertGameMetadata(ctx, db, r.gameID, payload)
+			if err != nil {
+				return fmt.Errorf("upsert metadata for game %d: %w", r.gameID, err)
+			}
+			if isInsert {
+				inserted++
+			} else {
+				updated++
+			}
 		} else {
-			updated++
+			if err := insertGameMetadata(ctx, db, r.gameID, payload); err != nil {
+				return fmt.Errorf("insert metadata for game %d: %w", r.gameID, err)
+			}
+			inserted++
 		}
 	}
 
@@ -304,6 +337,44 @@ RETURNING (xmax = 0)`
 		return false, err
 	}
 	return inserted, nil
+}
+
+func insertGameMetadata(ctx context.Context, db *sql.DB, gameID int, payload metaPayload) error {
+	const stmt = `
+INSERT INTO game_metadata (
+	game_id, name, description, cover_url, background_url, icon_url,
+	links, video_urls, screenshot_urls, artwork_urls, created_at, updated_at
+) VALUES (
+	$1, $2, $3, $4, $5, $6,
+	$7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+)`
+
+	_, err := db.ExecContext(ctx, stmt,
+		gameID,
+		payload.name,
+		payload.description,
+		payload.coverURL,
+		payload.backgroundURL,
+		payload.iconURL,
+		pq.Array(payload.links),
+		pq.Array(payload.videoURLs),
+		pq.Array(payload.screenshotURLs),
+		pq.Array(payload.artworkURLs),
+	)
+	return err
+}
+
+func gameMetadataExists(ctx context.Context, db *sql.DB, gameID int) (bool, error) {
+	const stmt = `SELECT 1 FROM game_metadata WHERE game_id = $1 LIMIT 1`
+	var dummy int
+	err := db.QueryRowContext(ctx, stmt, gameID).Scan(&dummy)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
 }
 
 func init() {
