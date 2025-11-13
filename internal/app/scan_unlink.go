@@ -37,6 +37,7 @@ type unlinkFile struct {
 type unlinkResult struct {
 	Location string       `json:"location"`
 	Count    int          `json:"count"`
+	Total    int          `json:"total"`
 	Files    []unlinkFile `json:"files"`
 }
 
@@ -193,6 +194,7 @@ func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPa
 	}
 
 	result.Count = len(result.Files)
+	result.Total = len(entries) - 1 // exclude gamelist.xml itself
 
 	return result, nil
 }
