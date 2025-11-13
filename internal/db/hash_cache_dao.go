@@ -16,6 +16,10 @@ type fileHashCacheDao struct {
 	dbGetter DatabaseGetter
 }
 
+type HashCacheEntry struct {
+	Location string
+}
+
 func newFileHashCacheDao() *fileHashCacheDao {
 	return &fileHashCacheDao{
 		dbGetter: Default,
@@ -88,6 +92,52 @@ func (dao *fileHashCacheDao) Upsert(ctx context.Context, location string, modTim
 		if _, err := db.ExecContext(ctx, updateSQL, updateArgs...); err != nil {
 			return fmt.Errorf("update hash cache: %w", err)
 		}
+	}
+	return nil
+}
+
+func (dao *fileHashCacheDao) ListAll(ctx context.Context) ([]HashCacheEntry, error) {
+	db := dao.dbGetter()
+	if db == nil {
+		return nil, fmt.Errorf("hash cache dao not initialised")
+	}
+	const query = `SELECT location FROM file_hash_cache_tab`
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list hash cache: %w", err)
+	}
+	defer rows.Close()
+
+	var result []HashCacheEntry
+	for rows.Next() {
+		var entry HashCacheEntry
+		if err := rows.Scan(&entry.Location); err != nil {
+			return nil, err
+		}
+		result = append(result, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (dao *fileHashCacheDao) DeleteByLocations(ctx context.Context, locations []string) error {
+	if len(locations) == 0 {
+		return nil
+	}
+	db := dao.dbGetter()
+	if db == nil {
+		return fmt.Errorf("hash cache dao not initialised")
+	}
+	where := map[string]interface{}{"location in": locations}
+	deleteSQL, args, err := builder.BuildDelete(hashCacheTableName, where)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, deleteSQL, args...)
+	if err != nil {
+		return fmt.Errorf("delete hash cache entries: %w", err)
 	}
 	return nil
 }

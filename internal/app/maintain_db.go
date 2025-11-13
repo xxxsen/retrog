@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	appdb "github.com/xxxsen/retrog/internal/db"
@@ -89,6 +91,10 @@ func (c *MaintainDBCommand) Run(ctx context.Context) error {
 		logger.Info("invalid hashes deleted", zap.Int("count", len(deleteList)))
 	}
 
+	if err := c.cleanupHashCache(ctx); err != nil {
+		return err
+	}
+
 	logger.Info("maintain-db completed",
 		zap.Int("invalid_records", totalInvalid),
 		zap.Bool("dry_run", c.dryRun),
@@ -126,6 +132,52 @@ func hasRequiredImageEntries(media []model.MediaEntry) bool {
 		}
 	}
 	return false
+}
+
+func (c *MaintainDBCommand) cleanupHashCache(ctx context.Context) error {
+	logger := logutil.GetLogger(ctx)
+	entries, err := appdb.FileHashCacheDao.ListAll(ctx)
+	if err != nil {
+		return fmt.Errorf("list hash cache: %w", err)
+	}
+
+	missing := make([]string, 0)
+	for _, entry := range entries {
+		location := strings.TrimSpace(entry.Location)
+		if location == "" {
+			continue
+		}
+		if _, err := os.Stat(location); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				logger.Warn("hash cache target missing", zap.String("location", location))
+				missing = append(missing, location)
+			} else {
+				logger.Warn("hash cache stat failed", zap.String("location", location), zap.Error(err))
+			}
+		}
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+	if c.dryRun {
+		logger.Info("hash cache entries missing (dryrun)", zap.Int("count", len(missing)))
+		return nil
+	}
+
+	const chunkSize = 200
+	for start := 0; start < len(missing); start += chunkSize {
+		end := start + chunkSize
+		if end > len(missing) {
+			end = len(missing)
+		}
+		chunk := missing[start:end]
+		if err := appdb.FileHashCacheDao.DeleteByLocations(ctx, chunk); err != nil {
+			return err
+		}
+	}
+	logger.Info("hash cache entries deleted", zap.Int("count", len(missing)))
+	return nil
 }
 
 func init() {
