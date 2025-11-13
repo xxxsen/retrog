@@ -278,7 +278,11 @@ func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Cli
 	pathValue := "./" + file.Name
 	desc := strings.TrimSpace(entry.Desc)
 
-	imagePath, err := c.downloadMedia(ctx, store, dir, imageDir, entry.Media, []string{"boxart", "boxfront", "logo", "screenshot"})
+	imagePath, err := c.downloadMedia(ctx, store, dir, imageDir, entry.Media, []string{"boxart", "boxfront", "screenshot"})
+	if err != nil {
+		return "", err
+	}
+	logoPath, err := c.downloadMedia(ctx, store, dir, imageDir, entry.Media, []string{"logo"})
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +315,9 @@ func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Cli
 	}
 	if imagePath != "" {
 		writeXMLElement(&builder, "image", imagePath)
-		writeXMLElement(&builder, "marquee", imagePath)
+	}
+	if logoPath != "" {
+		writeXMLElement(&builder, "marquee", logoPath)
 	}
 	if videoPath != "" {
 		writeXMLElement(&builder, "video", videoPath)
