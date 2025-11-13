@@ -236,6 +236,62 @@ type StoredMeta struct {
 	Entry model.Entry
 }
 
+func (dao *MetaDAO) FetchStoredByHashes(ctx context.Context, hashes []string) (map[string]StoredMeta, []string, error) {
+	result := make(map[string]StoredMeta, len(hashes))
+	missing := make([]string, 0)
+	if len(hashes) == 0 {
+		return result, missing, nil
+	}
+
+	db, err := dao.acquireDB()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	where := map[string]interface{}{"rom_hash in": hashes}
+	selectSQL, args, err := builder.BuildSelect(metaTableName, where, []string{"id", "rom_hash", "rom_name", "rom_desc", "rom_size", "ext_info"})
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err := db.QueryContext(ctx, selectSQL, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	found := make(map[string]struct{})
+	for rows.Next() {
+		var (
+			id     int64
+			hash   string
+			name   string
+			desc   string
+			size   int64
+			extRaw sql.NullString
+		)
+		if err := rows.Scan(&id, &hash, &name, &desc, &size, &extRaw); err != nil {
+			return nil, nil, err
+		}
+		entry, err := model.FromRecord(name, desc, size, extRaw.String)
+		if err != nil {
+			return nil, nil, err
+		}
+		result[hash] = StoredMeta{
+			ID:    id,
+			Hash:  hash,
+			Entry: entry,
+		}
+		found[hash] = struct{}{}
+	}
+
+	for _, hash := range hashes {
+		if _, ok := found[hash]; !ok {
+			missing = append(missing, hash)
+		}
+	}
+	return result, missing, rows.Err()
+}
+
 func (dao *MetaDAO) FetchPage(ctx context.Context, lastID int64, limit int) ([]StoredMeta, error) {
 	if limit <= 0 {
 		limit = 200
