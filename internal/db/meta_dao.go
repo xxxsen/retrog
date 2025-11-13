@@ -340,3 +340,21 @@ func isUniqueConstraintError(err error) bool {
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
 }
+
+func (dao *MetaDAO) DeleteByHashes(ctx context.Context, hashes []string) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+	db, err := dao.acquireDB()
+	if err != nil {
+		return err
+	}
+
+	where := map[string]interface{}{"rom_hash in": hashes}
+	deleteSQL, args, err := builder.BuildDelete(metaTableName, where)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, deleteSQL, args...)
+	return err
+}
