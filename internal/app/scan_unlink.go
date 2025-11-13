@@ -31,6 +31,7 @@ type ScanUnlinkCommand struct {
 type unlinkFile struct {
 	Name string `json:"name"`
 	Size int64  `json:"size"`
+	Hash string `json:"hash"`
 }
 
 type unlinkResult struct {
@@ -179,9 +180,15 @@ func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPa
 		if err != nil {
 			return result, fmt.Errorf("stat file %s: %w", full, err)
 		}
+		hash, err := readFileMD5WithCache(ctx, full)
+		if err != nil {
+			return result, fmt.Errorf("hash file %s: %w", full, err)
+		}
+
 		result.Files = append(result.Files, unlinkFile{
 			Name: entry.Name(),
 			Size: info.Size(),
+			Hash: hash,
 		})
 	}
 
