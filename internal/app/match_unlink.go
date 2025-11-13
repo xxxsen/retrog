@@ -29,11 +29,6 @@ type MatchUnlinkCommand struct {
 	replace    bool
 }
 
-type matchedMeta struct {
-	Entry model.Entry
-	ID    int64
-}
-
 func NewMatchUnlinkCommand() *MatchUnlinkCommand {
 	return &MatchUnlinkCommand{}
 }
@@ -141,8 +136,8 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 
 func (c *MatchUnlinkCommand) PostRun(ctx context.Context) error { return nil }
 
-func (c *MatchUnlinkCommand) fetchMatchedEntries(ctx context.Context, dao *appdb.MetaDAO, hashSet map[string]struct{}) (map[string]matchedMeta, error) {
-	result := make(map[string]matchedMeta, len(hashSet))
+func (c *MatchUnlinkCommand) fetchMatchedEntries(ctx context.Context, dao *appdb.MetaDAO, hashSet map[string]struct{}) (map[string]model.MatchedMeta, error) {
+	result := make(map[string]model.MatchedMeta, len(hashSet))
 	if len(hashSet) == 0 {
 		return result, nil
 	}
@@ -164,7 +159,7 @@ func (c *MatchUnlinkCommand) fetchMatchedEntries(ctx context.Context, dao *appdb
 			return nil, err
 		}
 		for hash, stored := range entries {
-			result[c.normalizeHash(hash)] = matchedMeta{
+			result[c.normalizeHash(hash)] = model.MatchedMeta{
 				Entry: stored.Entry,
 				ID:    stored.ID,
 			}
@@ -182,7 +177,7 @@ func init() {
 	RegisterRunner("match-unlink", func() IRunner { return NewMatchUnlinkCommand() })
 }
 
-func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.MatchResult, entries map[string]matchedMeta) error {
+func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.MatchResult, entries map[string]model.MatchedMeta) error {
 	store := storage.DefaultClient()
 	if store == nil {
 		return errors.New("storage client not initialised")
@@ -236,7 +231,7 @@ func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.M
 	return nil
 }
 
-func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Client, dir string, file model.UnlinkFile, meta matchedMeta) (string, error) {
+func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Client, dir string, file model.UnlinkFile, meta model.MatchedMeta) (string, error) {
 	entry := meta.Entry
 	name := entry.Name
 	if strings.TrimSpace(name) == "" {

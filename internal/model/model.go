@@ -43,3 +43,8 @@ type MediaLocation struct {
 type MediaReport struct {
 	UnlinkMedia []MediaLocation `json:"unlink-media"`
 }
+
+type MatchedMeta struct {
+	Entry Entry
+	ID    int64
+}
