@@ -16,6 +16,8 @@ type GamelistEntry struct {
 	Name        string   `xml:"name"`
 	Description string   `xml:"desc"`
 	Image       string   `xml:"image"`
+	Thumbnail   string   `xml:"thumbnail"`
+	Marquee     string   `xml:"marquee"`
 	Video       string   `xml:"video"`
 	Developer   string   `xml:"developer"`
 	Publisher   string   `xml:"publisher"`
@@ -43,6 +45,8 @@ func ParseGamelistFile(path string) (*GamelistDocument, error) {
 		doc.Games[i].Name = strings.TrimSpace(doc.Games[i].Name)
 		doc.Games[i].Description = strings.TrimSpace(doc.Games[i].Description)
 		doc.Games[i].Image = strings.TrimSpace(doc.Games[i].Image)
+		doc.Games[i].Thumbnail = strings.TrimSpace(doc.Games[i].Thumbnail)
+		doc.Games[i].Marquee = strings.TrimSpace(doc.Games[i].Marquee)
 		doc.Games[i].Video = strings.TrimSpace(doc.Games[i].Video)
 		doc.Games[i].Developer = strings.TrimSpace(doc.Games[i].Developer)
 		doc.Games[i].Publisher = strings.TrimSpace(doc.Games[i].Publisher)
