@@ -16,7 +16,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const largeFileHashThreshold int64 = 50 * 1024 * 1024
+const largeFileHashThreshold int64 = 10 * 1024 * 1024
 
 var (
 	whitespaceCollapseRegex = regexp.MustCompile(`\s+`)
