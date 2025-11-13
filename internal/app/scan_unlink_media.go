@@ -11,31 +11,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xxxsen/retrog/internal/metadata"
-
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
+	"github.com/xxxsen/retrog/internal/constant"
+	"github.com/xxxsen/retrog/internal/metadata"
+	"github.com/xxxsen/retrog/internal/model"
 	"go.uber.org/zap"
 )
 
 type ScanUnlinkMediaCommand struct {
 	rootDir string
 	output  string
-}
-
-type mediaDirResult struct {
-	Dir   string   `json:"dir"`
-	Count int      `json:"count"`
-	Files []string `json:"files"`
-}
-
-type mediaLocationResult struct {
-	Location string           `json:"location"`
-	Dirs     []mediaDirResult `json:"dirs"`
-}
-
-type mediaOutput struct {
-	UnlinkMedia []mediaLocationResult `json:"unlink-media"`
 }
 
 func NewScanUnlinkMediaCommand() *ScanUnlinkMediaCommand {
@@ -69,7 +55,7 @@ func (c *ScanUnlinkMediaCommand) PreRun(ctx context.Context) error {
 
 func (c *ScanUnlinkMediaCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
-	results := make([]mediaLocationResult, 0)
+	results := make([]model.MediaLocation, 0)
 	processed := make(map[string]struct{})
 
 	err := filepath.WalkDir(c.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -79,7 +65,7 @@ func (c *ScanUnlinkMediaCommand) Run(ctx context.Context) error {
 		if d.IsDir() {
 			return nil
 		}
-		if !strings.EqualFold(d.Name(), gamelistFileName) {
+		if !strings.EqualFold(d.Name(), constant.DefaultGamelistFile) {
 			return nil
 		}
 
@@ -110,7 +96,7 @@ func (c *ScanUnlinkMediaCommand) Run(ctx context.Context) error {
 		return results[i].Location < results[j].Location
 	})
 
-	output := mediaOutput{UnlinkMedia: results}
+	output := model.MediaReport{UnlinkMedia: results}
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal output: %w", err)
@@ -128,10 +114,10 @@ func (c *ScanUnlinkMediaCommand) Run(ctx context.Context) error {
 
 func (c *ScanUnlinkMediaCommand) PostRun(ctx context.Context) error { return nil }
 
-func (c *ScanUnlinkMediaCommand) collectMediaUnlinked(baseDir, gamelistPath string) (mediaLocationResult, error) {
-	result := mediaLocationResult{
+func (c *ScanUnlinkMediaCommand) collectMediaUnlinked(baseDir, gamelistPath string) (model.MediaLocation, error) {
+	result := model.MediaLocation{
 		Location: filepath.ToSlash(baseDir),
-		Dirs:     []mediaDirResult{},
+		Dirs:     []model.MediaDir{},
 	}
 
 	doc, err := metadata.ParseGamelistFile(gamelistPath)
@@ -165,7 +151,7 @@ func (c *ScanUnlinkMediaCommand) collectMediaUnlinked(baseDir, gamelistPath stri
 		return result, nil
 	}
 
-	dirResults := make([]mediaDirResult, 0)
+	dirResults := make([]model.MediaDir, 0)
 	for dir := range mediaDirs {
 		if _, err := os.Stat(dir); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -186,7 +172,7 @@ func (c *ScanUnlinkMediaCommand) collectMediaUnlinked(baseDir, gamelistPath stri
 		if err != nil {
 			relDir = dir
 		}
-		dirResults = append(dirResults, mediaDirResult{
+		dirResults = append(dirResults, model.MediaDir{
 			Dir:   "./" + filepath.ToSlash(relDir),
 			Count: len(files),
 			Files: files,

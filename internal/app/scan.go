@@ -14,19 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/pflag"
+	"github.com/xxxsen/common/logutil"
+	"github.com/xxxsen/retrog/internal/constant"
 	appdb "github.com/xxxsen/retrog/internal/db"
 	"github.com/xxxsen/retrog/internal/metadata"
 	"github.com/xxxsen/retrog/internal/model"
 	"github.com/xxxsen/retrog/internal/storage"
-
-	"github.com/spf13/pflag"
-	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
-)
-
-const (
-	defaultMetadataFile = "metadata.pegasus.txt"
-	defaultGamelistFile = "gamelist.xml"
 )
 
 var mediaCandidates = map[string]string{
@@ -121,7 +116,7 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 			return nil
 		}
 		name := d.Name()
-		if name != defaultMetadataFile && name != defaultGamelistFile {
+		if name != constant.DefaultMetadataFile && name != constant.DefaultGamelistFile {
 			return nil
 		}
 
@@ -133,9 +128,9 @@ func (c *ScanCommand) buildMeta(ctx context.Context, store storage.Client) (map[
 		dir := filepath.Dir(path)
 		var records map[string]model.Entry
 		var err error
-		if name == defaultMetadataFile {
+		if name == constant.DefaultMetadataFile {
 			records, err = c.processMetadata(ctx, store, dir)
-		} else if name == defaultGamelistFile {
+		} else if name == constant.DefaultGamelistFile {
 			records, err = c.processGamelist(ctx, store, dir)
 		} else {
 			return fmt.Errorf("invalid meta file:%s", name)
@@ -174,7 +169,7 @@ func (c *ScanCommand) persistMeta(ctx context.Context, meta map[string]model.Ent
 }
 
 func (c *ScanCommand) processMetadata(ctx context.Context, store storage.Client, categoryPath string) (map[string]model.Entry, error) {
-	metaPath := filepath.Join(categoryPath, defaultMetadataFile)
+	metaPath := filepath.Join(categoryPath, constant.DefaultMetadataFile)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing metadata", zap.String("path", metaPath))
 
@@ -203,7 +198,7 @@ func (c *ScanCommand) processMetadata(ctx context.Context, store storage.Client,
 }
 
 func (c *ScanCommand) processGamelist(ctx context.Context, store storage.Client, platformPath string) (map[string]model.Entry, error) {
-	gamelistPath := filepath.Join(platformPath, defaultGamelistFile)
+	gamelistPath := filepath.Join(platformPath, constant.DefaultGamelistFile)
 	logger := logutil.GetLogger(ctx)
 	logger.Debug("processing gamelist", zap.String("path", gamelistPath))
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xxxsen/retrog/internal/constant"
 	appdb "github.com/xxxsen/retrog/internal/db"
 	"github.com/xxxsen/retrog/internal/model"
 	"github.com/xxxsen/retrog/internal/storage"
@@ -26,33 +27,6 @@ type MatchUnlinkCommand struct {
 	outputPath string
 	fix        bool
 	replace    bool
-}
-
-type unlinkInput struct {
-	Unlink []unlinkEntry `json:"unlink"`
-}
-
-type unlinkEntry struct {
-	Location string           `json:"location"`
-	Count    int              `json:"count"`
-	Files    []unlinkMetaFile `json:"files"`
-}
-
-type unlinkMetaFile struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Hash string `json:"hash"`
-}
-
-type matchResult struct {
-	Location   string           `json:"location"`
-	MissCount  int              `json:"miss-count"`
-	MatchCount int              `json:"match-count"`
-	Files      []unlinkMetaFile `json:"files"`
-}
-
-type matchOutput struct {
-	Match []matchResult `json:"match"`
 }
 
 type matchedMeta struct {
@@ -98,7 +72,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read unlink meta %s: %w", c.unlinkPath, err)
 	}
-	var input unlinkInput
+	var input model.UnlinkReport
 	if err := json.Unmarshal(data, &input); err != nil {
 		return fmt.Errorf("decode unlink meta %s: %w", c.unlinkPath, err)
 	}
@@ -119,9 +93,9 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	results := make([]matchResult, 0)
+	results := make([]model.MatchResult, 0)
 	for _, entry := range input.Unlink {
-		matchedFiles := make([]unlinkMetaFile, 0)
+		matchedFiles := make([]model.UnlinkFile, 0)
 		for _, file := range entry.Files {
 			hash := normalizeHash(file.Hash)
 			if hash == "" {
@@ -134,7 +108,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 		if len(matchedFiles) == 0 {
 			continue
 		}
-		results = append(results, matchResult{
+		results = append(results, model.MatchResult{
 			Location:   filepath.ToSlash(entry.Location),
 			MissCount:  entry.Count,
 			MatchCount: len(matchedFiles),
@@ -142,7 +116,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 		})
 	}
 
-	output := matchOutput{Match: results}
+	output := model.MatchOutput{Match: results}
 	outData, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal match output: %w", err)
@@ -208,13 +182,7 @@ func init() {
 	RegisterRunner("match-unlink", func() IRunner { return NewMatchUnlinkCommand() })
 }
 
-const (
-	imageDir     = "images"
-	videoDir     = "videos"
-	retrogSubdir = "retrog"
-)
-
-func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []matchResult, entries map[string]matchedMeta) error {
+func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.MatchResult, entries map[string]matchedMeta) error {
 	store := storage.DefaultClient()
 	if store == nil {
 		return errors.New("storage client not initialised")
@@ -223,7 +191,7 @@ func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []matchRe
 	logger := logutil.GetLogger(ctx)
 	for _, result := range results {
 		dir := filepath.Clean(result.Location)
-		gamelistPath := filepath.Join(dir, gamelistFileName)
+		gamelistPath := filepath.Join(dir, constant.DefaultGamelistFile)
 		if _, err := os.Stat(gamelistPath); err != nil {
 			logger.Warn("gamelist missing, skip fix",
 				zap.String("path", filepath.ToSlash(gamelistPath)),
@@ -268,7 +236,7 @@ func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []matchRe
 	return nil
 }
 
-func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Client, dir string, file unlinkMetaFile, meta matchedMeta) (string, error) {
+func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Client, dir string, file model.UnlinkFile, meta matchedMeta) (string, error) {
 	entry := meta.Entry
 	name := entry.Name
 	if strings.TrimSpace(name) == "" {
@@ -278,15 +246,15 @@ func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Cli
 	pathValue := "./" + file.Name
 	desc := strings.TrimSpace(entry.Desc)
 
-	imagePath, err := c.downloadMedia(ctx, store, dir, imageDir, entry.Media, []string{"boxart", "boxfront", "screenshot"})
+	imagePath, err := c.downloadMedia(ctx, store, dir, constant.ImageDir, entry.Media, []string{"boxart", "boxfront", "screenshot"})
 	if err != nil {
 		return "", err
 	}
-	logoPath, err := c.downloadMedia(ctx, store, dir, imageDir, entry.Media, []string{"logo"})
+	logoPath, err := c.downloadMedia(ctx, store, dir, constant.ImageDir, entry.Media, []string{"logo"})
 	if err != nil {
 		return "", err
 	}
-	videoPath, err := c.downloadMedia(ctx, store, dir, videoDir, entry.Media, []string{"video"})
+	videoPath, err := c.downloadMedia(ctx, store, dir, constant.VideoDir, entry.Media, []string{"video"})
 	if err != nil {
 		return "", err
 	}
@@ -346,7 +314,7 @@ func (c *MatchUnlinkCommand) downloadMedia(ctx context.Context, store storage.Cl
 		return "", nil
 	}
 
-	subdir := filepath.Join(category, retrogSubdir)
+	subdir := filepath.Join(category, constant.RetrogMediaSubdir)
 	destDir := filepath.Join(dir, subdir)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return "", fmt.Errorf("create media dir %s: %w", destDir, err)

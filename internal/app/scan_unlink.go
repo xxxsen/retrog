@@ -11,14 +11,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xxxsen/retrog/internal/metadata"
-
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
+	"github.com/xxxsen/retrog/internal/constant"
+	"github.com/xxxsen/retrog/internal/metadata"
+	"github.com/xxxsen/retrog/internal/model"
 	"go.uber.org/zap"
 )
-
-const gamelistFileName = "gamelist.xml"
 
 type ScanUnlinkCommand struct {
 	rootDir string
@@ -26,24 +25,6 @@ type ScanUnlinkCommand struct {
 	ignore  string
 
 	ignoreExt map[string]struct{}
-}
-
-type unlinkFile struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	Hash string `json:"hash"`
-}
-
-type unlinkResult struct {
-	Location string       `json:"location"`
-	Count    int          `json:"count"`
-	Total    int          `json:"total"`
-	Files    []unlinkFile `json:"files"`
-}
-
-type unlinkOutput struct {
-	Count  int            `json:"count"`
-	Unlink []unlinkResult `json:"unlink"`
 }
 
 func NewScanUnlinkCommand() *ScanUnlinkCommand {
@@ -80,7 +61,7 @@ func (c *ScanUnlinkCommand) PreRun(ctx context.Context) error {
 
 func (c *ScanUnlinkCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
-	results := make([]unlinkResult, 0)
+	results := make([]model.UnlinkLocation, 0)
 	processed := make(map[string]struct{})
 
 	err := filepath.WalkDir(c.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -90,7 +71,7 @@ func (c *ScanUnlinkCommand) Run(ctx context.Context) error {
 		if d.IsDir() {
 			return nil
 		}
-		if !strings.EqualFold(d.Name(), gamelistFileName) {
+		if !strings.EqualFold(d.Name(), constant.DefaultGamelistFile) {
 			return nil
 		}
 
@@ -122,7 +103,7 @@ func (c *ScanUnlinkCommand) Run(ctx context.Context) error {
 		return results[i].Count > results[j].Count
 	})
 
-	output := unlinkOutput{
+	output := model.UnlinkReport{
 		Count:  len(results),
 		Unlink: results,
 	}
@@ -143,8 +124,8 @@ func (c *ScanUnlinkCommand) Run(ctx context.Context) error {
 
 func (c *ScanUnlinkCommand) PostRun(ctx context.Context) error { return nil }
 
-func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPath string) (unlinkResult, error) {
-	result := unlinkResult{Location: filepath.ToSlash(dir)}
+func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPath string) (model.UnlinkLocation, error) {
+	result := model.UnlinkLocation{Location: filepath.ToSlash(dir)}
 
 	doc, err := metadata.ParseGamelistFile(gamelistPath)
 	if err != nil {
@@ -167,7 +148,7 @@ func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPa
 		if entry.IsDir() {
 			continue
 		}
-		if strings.EqualFold(entry.Name(), gamelistFileName) {
+		if strings.EqualFold(entry.Name(), constant.DefaultGamelistFile) {
 			continue
 		}
 		full := filepath.Join(dir, entry.Name())
@@ -186,7 +167,7 @@ func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPa
 			return result, fmt.Errorf("hash file %s: %w", full, err)
 		}
 
-		result.Files = append(result.Files, unlinkFile{
+		result.Files = append(result.Files, model.UnlinkFile{
 			Name: entry.Name(),
 			Size: info.Size(),
 			Hash: hash,
@@ -194,7 +175,10 @@ func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPa
 	}
 
 	result.Count = len(result.Files)
-	result.Total = len(entries) - 1 // exclude gamelist.xml itself
+	result.Total = len(entries) - 1
+	if result.Total < 0 {
+		result.Total = 0
+	}
 
 	return result, nil
 }
