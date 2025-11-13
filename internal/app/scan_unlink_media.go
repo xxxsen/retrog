@@ -160,7 +160,7 @@ func (c *ScanUnlinkMediaCommand) collectMediaUnlinked(baseDir, gamelistPath stri
 			return result, fmt.Errorf("stat media dir %s: %w", dir, err)
 		}
 
-		files, err := listUnlinkedFiles(dir, referenced)
+		files, err := c.listUnlinkedFiles(dir, referenced)
 		if err != nil {
 			return result, err
 		}
@@ -186,7 +186,7 @@ func (c *ScanUnlinkMediaCommand) collectMediaUnlinked(baseDir, gamelistPath stri
 	return result, nil
 }
 
-func listUnlinkedFiles(dir string, referenced map[string]struct{}) ([]string, error) {
+func (c *ScanUnlinkMediaCommand) listUnlinkedFiles(dir string, referenced map[string]struct{}) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("read dir %s: %w", dir, err)

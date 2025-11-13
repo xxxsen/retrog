@@ -230,8 +230,8 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 	cleanedDesc := cleanDescription(gameDef.Description)
 	developer := strings.TrimSpace(gameDef.Developer)
 	publisher := strings.TrimSpace(gameDef.Publisher)
-	genres := cloneStringSlice(gameDef.Genres)
-	releaseTs := parseReleaseTimestamp(gameDef.Release)
+	genres := c.cloneStringSlice(gameDef.Genres)
+	releaseTs := c.parseReleaseTimestamp(gameDef.Release)
 
 	mediaDir := c.findMediaDir(categoryPath, gameDef)
 	mediaMap, err := c.collectMedia(ctx, store, categoryPath, mediaDir, gameDef)
@@ -362,8 +362,8 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 		Size:      info.Size(),
 		Developer: strings.TrimSpace(game.Developer),
 		Publisher: strings.TrimSpace(game.Publisher),
-		Genres:    cloneStringSlice(game.Genres),
-		ReleaseAt: parseReleaseTimestamp(game.ReleaseDate),
+		Genres:    c.cloneStringSlice(game.Genres),
+		ReleaseAt: c.parseReleaseTimestamp(game.ReleaseDate),
 		Media:     make([]model.MediaEntry, 0, len(mediaMap)),
 	}
 	for mediaType, asset := range mediaMap {
@@ -381,7 +381,7 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 			inner := entry
 			inner.Size = size
 			inner.Media = append([]model.MediaEntry(nil), entry.Media...)
-			inner.Genres = cloneStringSlice(entry.Genres)
+			inner.Genres = c.cloneStringSlice(entry.Genres)
 			entries[hash] = inner
 		}
 	}
@@ -579,7 +579,7 @@ func (c *ScanCommand) collectSpecifiedMedia(ctx context.Context, store storage.C
 	return result, nil
 }
 
-func cloneStringSlice(src []string) []string {
+func (c *ScanCommand) cloneStringSlice(src []string) []string {
 	if len(src) == 0 {
 		return nil
 	}
@@ -588,7 +588,7 @@ func cloneStringSlice(src []string) []string {
 	return dst
 }
 
-func parseReleaseTimestamp(value string) int64 {
+func (c *ScanCommand) parseReleaseTimestamp(value string) int64 {
 	val := strings.TrimSpace(value)
 	if val == "" {
 		return 0

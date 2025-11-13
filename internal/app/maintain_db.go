@@ -58,7 +58,7 @@ func (c *MaintainDBCommand) Run(ctx context.Context) error {
 		}
 
 		for _, item := range page {
-			reasons := findInvalidReasons(item)
+			reasons := c.findInvalidReasons(item)
 			if len(reasons) == 0 {
 				continue
 			}
@@ -104,7 +104,7 @@ func (c *MaintainDBCommand) Run(ctx context.Context) error {
 
 func (c *MaintainDBCommand) PostRun(ctx context.Context) error { return nil }
 
-func findInvalidReasons(item appdb.StoredMeta) []string {
+func (c *MaintainDBCommand) findInvalidReasons(item appdb.StoredMeta) []string {
 	var reasons []string
 	entry := item.Entry
 	if strings.TrimSpace(entry.Name) == "" {
@@ -118,13 +118,13 @@ func findInvalidReasons(item appdb.StoredMeta) []string {
 	}
 	if len(entry.Media) == 0 {
 		reasons = append(reasons, "no media")
-	} else if !hasRequiredImageEntries(entry.Media) {
+	} else if !c.hasRequiredImageEntries(entry.Media) {
 		reasons = append(reasons, "missing image media")
 	}
 	return reasons
 }
 
-func hasRequiredImageEntries(media []model.MediaEntry) bool {
+func (c *MaintainDBCommand) hasRequiredImageEntries(media []model.MediaEntry) bool {
 	for _, item := range media {
 		switch strings.ToLower(item.Type) {
 		case "boxart", "boxfront", "screenshot":

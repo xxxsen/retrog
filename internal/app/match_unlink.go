@@ -80,7 +80,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 	hashSet := make(map[string]struct{})
 	for _, entry := range input.Unlink {
 		for _, file := range entry.Files {
-			hash := normalizeHash(file.Hash)
+			hash := c.normalizeHash(file.Hash)
 			if hash == "" {
 				continue
 			}
@@ -88,7 +88,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 		}
 	}
 
-	matchedEntries, err := fetchMatchedEntries(ctx, appdb.MetaDao, hashSet)
+	matchedEntries, err := c.fetchMatchedEntries(ctx, appdb.MetaDao, hashSet)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 	for _, entry := range input.Unlink {
 		matchedFiles := make([]model.UnlinkFile, 0)
 		for _, file := range entry.Files {
-			hash := normalizeHash(file.Hash)
+			hash := c.normalizeHash(file.Hash)
 			if hash == "" {
 				continue
 			}
@@ -141,7 +141,7 @@ func (c *MatchUnlinkCommand) Run(ctx context.Context) error {
 
 func (c *MatchUnlinkCommand) PostRun(ctx context.Context) error { return nil }
 
-func fetchMatchedEntries(ctx context.Context, dao *appdb.MetaDAO, hashSet map[string]struct{}) (map[string]matchedMeta, error) {
+func (c *MatchUnlinkCommand) fetchMatchedEntries(ctx context.Context, dao *appdb.MetaDAO, hashSet map[string]struct{}) (map[string]matchedMeta, error) {
 	result := make(map[string]matchedMeta, len(hashSet))
 	if len(hashSet) == 0 {
 		return result, nil
@@ -164,7 +164,7 @@ func fetchMatchedEntries(ctx context.Context, dao *appdb.MetaDAO, hashSet map[st
 			return nil, err
 		}
 		for hash, stored := range entries {
-			result[normalizeHash(hash)] = matchedMeta{
+			result[c.normalizeHash(hash)] = matchedMeta{
 				Entry: stored.Entry,
 				ID:    stored.ID,
 			}
@@ -174,7 +174,7 @@ func fetchMatchedEntries(ctx context.Context, dao *appdb.MetaDAO, hashSet map[st
 	return result, nil
 }
 
-func normalizeHash(hash string) string {
+func (c *MatchUnlinkCommand) normalizeHash(hash string) string {
 	return strings.ToLower(strings.TrimSpace(hash))
 }
 
@@ -202,7 +202,7 @@ func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.M
 
 		additions := make([]string, 0, len(result.Files))
 		for _, file := range result.Files {
-			meta, ok := entries[normalizeHash(file.Hash)]
+			meta, ok := entries[c.normalizeHash(file.Hash)]
 			if !ok {
 				continue
 			}
@@ -302,7 +302,7 @@ func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Cli
 	if genres != "" {
 		writeXMLElement(&builder, "genre", genres)
 	}
-	writeXMLElement(&builder, "md5", normalizeHash(file.Hash))
+	writeXMLElement(&builder, "md5", c.normalizeHash(file.Hash))
 	builder.WriteString("  </game>\n")
 
 	return builder.String(), nil
