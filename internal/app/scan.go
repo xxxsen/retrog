@@ -45,6 +45,8 @@ var mediaAssetAliases = map[string][]string{
 	"logo":       {"logo"},
 }
 
+var requiredImageTypes = []string{"boxart", "boxfront", "screenshot"}
+
 type ScanCommand struct {
 	romDir      string
 	allowUpdate bool
@@ -241,6 +243,13 @@ func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, cat
 	if err != nil {
 		return nil, err
 	}
+	if !hasRequiredImage(mediaMap) {
+		logutil.GetLogger(ctx).Warn("skip game due to missing image media",
+			zap.String("game", gameDef.Name),
+			zap.String("category", categoryPath),
+		)
+		return entries, nil
+	}
 
 	for _, rel := range gameDef.Files {
 		rel = strings.TrimSpace(rel)
@@ -344,6 +353,12 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 	mediaMap, err := c.collectSpecifiedMedia(ctx, store, mediaPaths)
 	if err != nil {
 		return nil, err
+	}
+	if !hasRequiredImage(mediaMap) {
+		logger.Warn("skip rom due to missing image media",
+			zap.String("path", romPath),
+		)
+		return entries, nil
 	}
 
 	entry := model.Entry{
@@ -615,4 +630,16 @@ func parseReleaseTimestamp(value string) int64 {
 
 func init() {
 	RegisterRunner("scan", func() IRunner { return NewScanCommand() })
+}
+
+func hasRequiredImage(mediaMap map[string]model.MediaEntry) bool {
+	if len(mediaMap) == 0 {
+		return false
+	}
+	for _, typ := range requiredImageTypes {
+		if _, ok := mediaMap[typ]; ok {
+			return true
+		}
+	}
+	return false
 }
