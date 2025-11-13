@@ -6,7 +6,7 @@ import (
 
 var defaultKeyList = []string{
 	"./config.json",
-	"/etc/config.json",
+	"/etc/retrog/config.json",
 }
 
 func LoadConfig(explicit string) (*config.Config, error) {
