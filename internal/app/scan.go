@@ -14,13 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/pflag"
-	"github.com/xxxsen/common/logutil"
-	"github.com/xxxsen/retrog/internal/constant"
+	constant "github.com/xxxsen/retrog/internal/constant"
 	appdb "github.com/xxxsen/retrog/internal/db"
 	"github.com/xxxsen/retrog/internal/metadata"
 	"github.com/xxxsen/retrog/internal/model"
 	"github.com/xxxsen/retrog/internal/storage"
+
+	"github.com/spf13/pflag"
+	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
 
