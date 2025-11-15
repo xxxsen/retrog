@@ -227,7 +227,8 @@ func (c *ScanCommand) processGamelist(ctx context.Context, store storage.Client,
 func (c *ScanCommand) processGame(ctx context.Context, store storage.Client, categoryPath string, gameDef metadata.Game) (map[string]model.Entry, error) {
 	entries := make(map[string]model.Entry)
 
-	cleanedName := cleanGameName(gameDef.Name)
+	nameValue, _ := stripGameNamePrefix(gameDef.Name)
+	cleanedName := cleanGameName(nameValue)
 	cleanedDesc := cleanDescription(gameDef.Description)
 	developer := strings.TrimSpace(gameDef.Developer)
 	publisher := strings.TrimSpace(gameDef.Publisher)
@@ -357,8 +358,9 @@ func (c *ScanCommand) processGamelistGame(ctx context.Context, store storage.Cli
 		return entries, nil
 	}
 
+	strippedName, _ := stripGameNamePrefix(game.Name)
 	entry := model.Entry{
-		Name:      cleanGameName(game.Name),
+		Name:      cleanGameName(strippedName),
 		Desc:      cleanDescription(game.Description),
 		Size:      info.Size(),
 		Developer: strings.TrimSpace(game.Developer),

@@ -152,7 +152,7 @@ func normalizeGameName(value string) (string, bool) {
 		}
 		return trimmed, true
 	}
-	if hasNamePrefix(trimmed) {
+	if hasGameNamePrefix(trimmed) {
 		return value, false
 	}
 	prefix := determineNamePrefix(trimmed)
@@ -161,21 +161,6 @@ func normalizeGameName(value string) (string, bool) {
 	}
 	normalized := prefix + " " + trimmed
 	return normalized, normalized != value
-}
-
-func hasNamePrefix(name string) bool {
-	runes := []rune(name)
-	if len(runes) < 2 {
-		return false
-	}
-	if !isPrefixRune(runes[0]) {
-		return false
-	}
-	return unicode.IsSpace(runes[1])
-}
-
-func isPrefixRune(r rune) bool {
-	return (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 func determineNamePrefix(name string) string {
