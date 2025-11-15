@@ -248,6 +248,32 @@ func resolveResourcePath(baseDir, value string) string {
 	return filepath.Join(baseDir, val)
 }
 
+func collectExistingFolders(baseDir string, folders []metadata.GamelistFolder) map[string]struct{} {
+	result := make(map[string]struct{})
+	for _, folder := range folders {
+		if resolved := resolveResourcePath(baseDir, folder.Path); resolved != "" {
+			result[filepath.Clean(resolved)] = struct{}{}
+		}
+	}
+	return result
+}
+
+func modsFolderInfo(relPath string) (string, string) {
+	slash := filepath.ToSlash(strings.TrimSpace(relPath))
+	if slash == "" {
+		return "", ""
+	}
+	parts := strings.Split(slash, "/")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	if !strings.EqualFold(parts[0], constant.ModsDirName) {
+		return "", ""
+	}
+	folderParts := []string{parts[0], parts[1]}
+	return filepath.ToSlash(filepath.Join(folderParts...)), parts[1]
+}
+
 func init() {
 	RegisterRunner("scan-unlink", func() IRunner { return NewScanUnlinkCommand() })
 }
@@ -310,6 +336,8 @@ func (c *ScanUnlinkCommand) fixGamelists(ctx context.Context, locations []model.
 		}
 
 		extraEntries := make([]metadata.GamelistEntry, 0, len(loc.Files))
+		existingFolders := collectExistingFolders(dir, doc.Folders)
+		pendingFolders := make(map[string]metadata.GamelistFolder)
 		for _, file := range loc.Files {
 			meta, ok := matchedEntries[normalizeHash(file.Hash)]
 			if !ok {
@@ -325,6 +353,17 @@ func (c *ScanUnlinkCommand) fixGamelists(ctx context.Context, locations []model.
 				continue
 			}
 			extraEntries = append(extraEntries, *entry)
+			if folderRel, folderName := modsFolderInfo(file.Name); folderRel != "" {
+				folderAbs := filepath.Clean(filepath.Join(dir, filepath.FromSlash(folderRel)))
+				if _, exists := existingFolders[folderAbs]; !exists {
+					if _, queued := pendingFolders[folderAbs]; !queued {
+						pendingFolders[folderAbs] = metadata.GamelistFolder{
+							Path: "./" + filepath.ToSlash(folderRel),
+							Name: folderName,
+						}
+					}
+				}
+			}
 		}
 		if len(extraEntries) == 0 {
 			continue
@@ -337,6 +376,16 @@ func (c *ScanUnlinkCommand) fixGamelists(ctx context.Context, locations []model.
 
 		updatedDoc := *doc
 		updatedDoc.Games = append(updatedDoc.Games, extraEntries...)
+		if len(pendingFolders) > 0 {
+			newFolders := make([]metadata.GamelistFolder, 0, len(pendingFolders))
+			for _, folder := range pendingFolders {
+				newFolders = append(newFolders, folder)
+			}
+			sort.Slice(newFolders, func(i, j int) bool {
+				return newFolders[i].Path < newFolders[j].Path
+			})
+			updatedDoc.Folders = append(updatedDoc.Folders, newFolders...)
+		}
 
 		if err := metadata.WriteGamelistFile(destPath, &updatedDoc); err != nil {
 			return err

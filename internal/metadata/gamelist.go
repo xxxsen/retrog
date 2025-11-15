@@ -9,8 +9,9 @@ import (
 )
 
 type GamelistDocument struct {
-	Provider ProviderInfo    `xml:"provider"`
-	Games    []GamelistEntry `xml:"game"`
+	Provider ProviderInfo     `xml:"provider"`
+	Games    []GamelistEntry  `xml:"game"`
+	Folders  []GamelistFolder `xml:"folder"`
 }
 
 // ProviderInfo describes metadata about the gamelist file creator/source.
@@ -62,6 +63,18 @@ type GamelistEntry struct {
 	Mix         string    `xml:"mix"`
 }
 
+type GamelistFolder struct {
+	Path        string `xml:"path"`
+	Image       string `xml:"image"`
+	Name        string `xml:"name"`
+	Description string `xml:"desc"`
+	ReleaseDate string `xml:"releasedate"`
+	Developer   string `xml:"developer"`
+	Publisher   string `xml:"publisher"`
+	Genre       string `xml:"genre"`
+	Players     string `xml:"players"`
+}
+
 type providerXML struct {
 	SystemUpper string `xml:"System"`
 	SystemLower string `xml:"system"`
@@ -78,8 +91,9 @@ func ParseGamelistFile(path string) (*GamelistDocument, error) {
 	defer f.Close()
 
 	var doc struct {
-		Provider providerXML     `xml:"provider"`
-		Games    []GamelistEntry `xml:"game"`
+		Provider providerXML      `xml:"provider"`
+		Games    []GamelistEntry  `xml:"game"`
+		Folders  []GamelistFolder `xml:"folder"`
 	}
 	decoder := xml.NewDecoder(f)
 	if err := decoder.Decode(&doc); err != nil {
@@ -123,6 +137,19 @@ func ParseGamelistFile(path string) (*GamelistDocument, error) {
 		}
 	}
 
+	for i := range doc.Folders {
+		folder := &doc.Folders[i]
+		folder.Path = strings.TrimSpace(folder.Path)
+		folder.Image = strings.TrimSpace(folder.Image)
+		folder.Name = strings.TrimSpace(folder.Name)
+		folder.Description = strings.TrimSpace(folder.Description)
+		folder.ReleaseDate = strings.TrimSpace(folder.ReleaseDate)
+		folder.Developer = strings.TrimSpace(folder.Developer)
+		folder.Publisher = strings.TrimSpace(folder.Publisher)
+		folder.Genre = strings.TrimSpace(folder.Genre)
+		folder.Players = strings.TrimSpace(folder.Players)
+	}
+
 	systemValue := strings.TrimSpace(doc.Provider.SystemUpper)
 	if systemValue == "" {
 		systemValue = strings.TrimSpace(doc.Provider.SystemLower)
@@ -138,6 +165,7 @@ func ParseGamelistFile(path string) (*GamelistDocument, error) {
 	return &GamelistDocument{
 		Provider: provider,
 		Games:    doc.Games,
+		Folders:  doc.Folders,
 	}, nil
 }
 
@@ -155,10 +183,14 @@ func WriteGamelistFile(path string, doc *GamelistDocument) error {
 
 	output := gamelistOutput{
 		XMLName: xml.Name{Local: "gameList"},
+		Folders: make([]gamelistFolderOutputEntry, 0, len(doc.Folders)),
 		Games:   make([]gamelistOutputEntry, 0, len(doc.Games)),
 	}
 	if provider := doc.providerOutput(); provider != nil {
 		output.Provider = provider
+	}
+	for _, folder := range doc.Folders {
+		output.Folders = append(output.Folders, newFolderOutputEntry(folder))
 	}
 	for _, game := range doc.Games {
 		output.Games = append(output.Games, newOutputEntry(game))
@@ -269,9 +301,10 @@ func trimScrap(s ScrapInfo) *scrapOutput {
 }
 
 type gamelistOutput struct {
-	XMLName  xml.Name              `xml:"gameList"`
-	Provider *providerOutput       `xml:"provider,omitempty"`
-	Games    []gamelistOutputEntry `xml:"game"`
+	XMLName  xml.Name                    `xml:"gameList"`
+	Provider *providerOutput             `xml:"provider,omitempty"`
+	Folders  []gamelistFolderOutputEntry `xml:"folder,omitempty"`
+	Games    []gamelistOutputEntry       `xml:"game"`
 }
 
 type providerOutput struct {
@@ -320,4 +353,31 @@ type gamelistOutputEntry struct {
 	CheevosHash string       `xml:"cheevosHash,omitempty"`
 	Adult       bool         `xml:"adult,omitempty"`
 	Mix         string       `xml:"mix,omitempty"`
+}
+
+type gamelistFolderOutputEntry struct {
+	XMLName     xml.Name `xml:"folder"`
+	Path        string   `xml:"path,omitempty"`
+	Image       string   `xml:"image,omitempty"`
+	Name        string   `xml:"name,omitempty"`
+	Description string   `xml:"desc,omitempty"`
+	ReleaseDate string   `xml:"releasedate,omitempty"`
+	Developer   string   `xml:"developer,omitempty"`
+	Publisher   string   `xml:"publisher,omitempty"`
+	Genre       string   `xml:"genre,omitempty"`
+	Players     string   `xml:"players,omitempty"`
+}
+
+func newFolderOutputEntry(src GamelistFolder) gamelistFolderOutputEntry {
+	return gamelistFolderOutputEntry{
+		Path:        strings.TrimSpace(src.Path),
+		Image:       strings.TrimSpace(src.Image),
+		Name:        strings.TrimSpace(src.Name),
+		Description: strings.TrimSpace(src.Description),
+		ReleaseDate: strings.TrimSpace(src.ReleaseDate),
+		Developer:   strings.TrimSpace(src.Developer),
+		Publisher:   strings.TrimSpace(src.Publisher),
+		Genre:       strings.TrimSpace(src.Genre),
+		Players:     strings.TrimSpace(src.Players),
+	}
 }
