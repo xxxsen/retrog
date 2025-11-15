@@ -138,48 +138,100 @@ func (c *ScanUnlinkCommand) collectUnlinked(ctx context.Context, dir, gamelistPa
 		}
 	}
 
-	entries, err := os.ReadDir(dir)
+	files, err := c.listManagedFiles(dir)
 	if err != nil {
-		return result, fmt.Errorf("read dir %s: %w", dir, err)
+		return result, err
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
+	for _, file := range files {
+		if _, ok := linked[filepath.Clean(file.absPath)]; ok {
 			continue
 		}
-		if strings.EqualFold(entry.Name(), constant.DefaultGamelistFile) {
-			continue
-		}
-		full := filepath.Join(dir, entry.Name())
-		if c.shouldIgnore(entry.Name()) {
-			continue
-		}
-		if _, ok := linked[filepath.Clean(full)]; ok {
-			continue
-		}
-		info, err := entry.Info()
+		info, err := os.Stat(file.absPath)
 		if err != nil {
-			return result, fmt.Errorf("stat file %s: %w", full, err)
+			return result, fmt.Errorf("stat file %s: %w", file.absPath, err)
 		}
-		hash, err := readFileMD5WithCache(ctx, full)
+		hash, err := readFileMD5WithCache(ctx, file.absPath)
 		if err != nil {
-			return result, fmt.Errorf("hash file %s: %w", full, err)
+			return result, fmt.Errorf("hash file %s: %w", file.absPath, err)
 		}
 
 		result.Files = append(result.Files, model.UnlinkFile{
-			Name: entry.Name(),
+			Name: file.relPath,
 			Size: info.Size(),
 			Hash: hash,
 		})
 	}
 
 	result.Count = len(result.Files)
-	result.Total = len(entries) - 1
-	if result.Total < 0 {
-		result.Total = 0
-	}
+	result.Total = len(files)
 
 	return result, nil
+}
+
+type romCandidate struct {
+	absPath string
+	relPath string
+}
+
+func (c *ScanUnlinkCommand) listManagedFiles(dir string) ([]romCandidate, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+
+	files := make([]romCandidate, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			if strings.EqualFold(name, constant.ModsDirName) {
+				modsDir := filepath.Join(dir, name)
+				if err := c.walkMods(dir, modsDir, &files); err != nil {
+					return nil, fmt.Errorf("scan mods dir %s: %w", modsDir, err)
+				}
+			}
+			continue
+		}
+		if strings.EqualFold(name, constant.DefaultGamelistFile) {
+			continue
+		}
+		if c.shouldIgnore(name) {
+			continue
+		}
+		files = append(files, romCandidate{
+			absPath: filepath.Join(dir, name),
+			relPath: filepath.ToSlash(name),
+		})
+	}
+
+	sort.Slice(files, func(i, j int) bool { return files[i].relPath < files[j].relPath })
+	return files, nil
+}
+
+func (c *ScanUnlinkCommand) walkMods(baseDir, modsDir string, files *[]romCandidate) error {
+	return filepath.WalkDir(modsDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(d.Name(), constant.DefaultGamelistFile) {
+			return nil
+		}
+		if c.shouldIgnore(d.Name()) {
+			return nil
+		}
+		rel, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			return err
+		}
+		*files = append(*files, romCandidate{
+			absPath: filepath.Clean(path),
+			relPath: filepath.ToSlash(rel),
+		})
+		return nil
+	})
 }
 
 func resolveResourcePath(baseDir, value string) string {
@@ -332,7 +384,7 @@ func buildGamelistEntry(ctx context.Context, store storage.Client, dir string, f
 	entry := meta.Entry
 	name := entry.Name
 	if strings.TrimSpace(name) == "" {
-		name = file.Name
+		name = filepath.Base(file.Name)
 	}
 
 	pathValue := "./" + file.Name

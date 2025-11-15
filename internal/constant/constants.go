@@ -6,4 +6,5 @@ const (
 	ImageDir            = "images"
 	VideoDir            = "videos"
 	RetrogMediaSubdir   = "retrog"
+	ModsDirName         = "mods"
 )
