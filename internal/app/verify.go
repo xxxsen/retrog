@@ -23,6 +23,7 @@ import (
 type VerifyCommand struct {
 	rootDir string
 	output  string
+	fix     bool
 }
 
 func NewVerifyCommand() *VerifyCommand {
@@ -38,6 +39,7 @@ func (c *VerifyCommand) Desc() string {
 func (c *VerifyCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.rootDir, "dir", "", "ROM 根目录")
 	f.StringVar(&c.output, "output", "", "输出 JSON 文件路径")
+	f.BoolVar(&c.fix, "fix", false, "自动移除缺失 ROM 的条目，并清空无效媒体字段")
 }
 
 func (c *VerifyCommand) PreRun(ctx context.Context) error {
@@ -50,6 +52,7 @@ func (c *VerifyCommand) PreRun(ctx context.Context) error {
 	logutil.GetLogger(ctx).Info("starting verify",
 		zap.String("dir", c.rootDir),
 		zap.String("output", c.output),
+		zap.Bool("fix", c.fix),
 	)
 	return nil
 }
@@ -66,7 +69,7 @@ func (c *VerifyCommand) Run(ctx context.Context) error {
 		if d.IsDir() {
 			return nil
 		}
-	if !strings.EqualFold(d.Name(), constant.DefaultGamelistFile) {
+		if !strings.EqualFold(d.Name(), constant.DefaultGamelistFile) {
 			return nil
 		}
 
@@ -79,7 +82,7 @@ func (c *VerifyCommand) Run(ctx context.Context) error {
 		logger.Info("verifying gamelist",
 			zap.String("path", filepath.ToSlash(path)),
 		)
-		locationResult, err := c.verifyGamelist(cleanDir, path)
+		locationResult, err := c.verifyGamelist(ctx, cleanDir, path)
 		if err != nil {
 			return err
 		}
@@ -111,7 +114,7 @@ func (c *VerifyCommand) Run(ctx context.Context) error {
 
 func (c *VerifyCommand) PostRun(ctx context.Context) error { return nil }
 
-func (c *VerifyCommand) verifyGamelist(baseDir, gamelistPath string) (model.VerifyLocation, error) {
+func (c *VerifyCommand) verifyGamelist(ctx context.Context, baseDir, gamelistPath string) (model.VerifyLocation, error) {
 	result := model.VerifyLocation{
 		Location: filepath.ToSlash(baseDir),
 		List:     []model.VerifyCase{},
@@ -122,15 +125,21 @@ func (c *VerifyCommand) verifyGamelist(baseDir, gamelistPath string) (model.Veri
 		return result, fmt.Errorf("parse gamelist %s: %w", gamelistPath, err)
 	}
 
-	for _, game := range doc.Games {
+	newGames := make([]metadata.GamelistEntry, 0, len(doc.Games))
+	changed := false
+
+	for _, src := range doc.Games {
+		game := src
 		caseItem := model.VerifyCase{
 			Rom:    strings.TrimSpace(game.Path),
 			Reason: make([]string, 0),
 		}
 
+		romMissing := false
 		gamePath := resolveResourcePath(baseDir, game.Path)
 		if gamePath == "" || !fileExists(gamePath) {
 			caseItem.Reason = append(caseItem.Reason, "rom missing")
+			romMissing = true
 		} else if isZipFile(gamePath) {
 			if err := inspectZip(gamePath); err != nil {
 				caseItem.Reason = append(caseItem.Reason, "zip read failed")
@@ -144,17 +153,51 @@ func (c *VerifyCommand) verifyGamelist(baseDir, gamelistPath string) (model.Veri
 			caseItem.Reason = append(caseItem.Reason, "empty desc")
 		}
 
-		mediaPaths := []string{game.Image, game.Video, game.Thumbnail, game.Marquee}
-		for _, rel := range mediaPaths {
+		mediaFields := []struct {
+			value *string
+		}{
+			{value: &game.Image},
+			{value: &game.Video},
+			{value: &game.Thumbnail},
+			{value: &game.Marquee},
+		}
+		for _, field := range mediaFields {
+			rel := strings.TrimSpace(*field.value)
+			if rel == "" {
+				continue
+			}
 			full := resolveResourcePath(baseDir, rel)
-			if rel != "" && !fileExists(full) {
+			if !fileExists(full) {
 				caseItem.Reason = append(caseItem.Reason, "media missing:"+rel)
+				if c.fix {
+					if *field.value != "" {
+						*field.value = ""
+						changed = true
+					}
+				}
 			}
 		}
 
 		if len(caseItem.Reason) > 0 {
 			result.List = append(result.List, caseItem)
 		}
+
+		if romMissing && c.fix {
+			changed = true
+			continue
+		}
+
+		newGames = append(newGames, game)
+	}
+
+	if c.fix && changed {
+		doc.Games = newGames
+		if err := metadata.WriteGamelistFile(gamelistPath, doc); err != nil {
+			return result, fmt.Errorf("update gamelist %s: %w", gamelistPath, err)
+		}
+		logutil.GetLogger(ctx).Info("verify fixed gamelist",
+			zap.String("path", filepath.ToSlash(gamelistPath)),
+		)
 	}
 
 	return result, nil
