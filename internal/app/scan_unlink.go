@@ -42,7 +42,7 @@ func (c *ScanUnlinkCommand) Desc() string {
 
 func (c *ScanUnlinkCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.rootDir, "dir", "", "ROM 根目录")
-	f.StringVar(&c.ignore, "ignore-ext", ".txt,.info,.xml,.fix", "忽略的 ROM 扩展名，逗号分隔，例如 .txt,.nfo")
+	f.StringVar(&c.ignore, "ignore-ext", ".txt,.info,.xml,.fix,.cfg", "忽略的 ROM 扩展名，逗号分隔，例如 .txt,.nfo")
 	f.BoolVar(&c.fix, "fix", false, "根据 meta.db 自动补充 gamelist.xml")
 	f.BoolVar(&c.replace, "replace", false, "与 --fix 搭配使用，是否直接覆盖 gamelist.xml（默认输出 gamelist.xml.fix）")
 }
