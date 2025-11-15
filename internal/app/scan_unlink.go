@@ -184,10 +184,10 @@ func (c *ScanUnlinkCommand) listManagedFiles(dir string) ([]romCandidate, error)
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() {
-			if strings.EqualFold(name, constant.ModsDirName) {
-				modsDir := filepath.Join(dir, name)
-				if err := c.walkMods(dir, modsDir, &files); err != nil {
-					return nil, fmt.Errorf("scan mods dir %s: %w", modsDir, err)
+			if strings.EqualFold(name, constant.ExtraDirName) {
+				extraDir := filepath.Join(dir, name)
+				if err := c.walkExtra(dir, extraDir, &files); err != nil {
+					return nil, fmt.Errorf("scan extra dir %s: %w", extraDir, err)
 				}
 			}
 			continue
@@ -208,8 +208,8 @@ func (c *ScanUnlinkCommand) listManagedFiles(dir string) ([]romCandidate, error)
 	return files, nil
 }
 
-func (c *ScanUnlinkCommand) walkMods(baseDir, modsDir string, files *[]romCandidate) error {
-	return filepath.WalkDir(modsDir, func(path string, d fs.DirEntry, walkErr error) error {
+func (c *ScanUnlinkCommand) walkExtra(baseDir, extraDir string, files *[]romCandidate) error {
+	return filepath.WalkDir(extraDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -258,7 +258,7 @@ func collectExistingFolders(baseDir string, folders []metadata.GamelistFolder) m
 	return result
 }
 
-func modsFolderInfo(relPath string) (string, string) {
+func extraFolderInfo(relPath string) (string, string) {
 	slash := filepath.ToSlash(strings.TrimSpace(relPath))
 	if slash == "" {
 		return "", ""
@@ -267,7 +267,7 @@ func modsFolderInfo(relPath string) (string, string) {
 	if len(parts) < 2 {
 		return "", ""
 	}
-	if !strings.EqualFold(parts[0], constant.ModsDirName) {
+	if !strings.EqualFold(parts[0], constant.ExtraDirName) {
 		return "", ""
 	}
 	folderParts := []string{parts[0], parts[1]}
@@ -353,7 +353,7 @@ func (c *ScanUnlinkCommand) fixGamelists(ctx context.Context, locations []model.
 				continue
 			}
 			extraEntries = append(extraEntries, *entry)
-			if folderRel, folderName := modsFolderInfo(file.Name); folderRel != "" {
+			if folderRel, folderName := extraFolderInfo(file.Name); folderRel != "" {
 				folderAbs := filepath.Clean(filepath.Join(dir, filepath.FromSlash(folderRel)))
 				if _, exists := existingFolders[folderAbs]; !exists {
 					if _, queued := pendingFolders[folderAbs]; !queued {
