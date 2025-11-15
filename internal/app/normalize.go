@@ -22,33 +22,33 @@ var pinyinFirstLetterArgs = func() pinyin.Args {
 	return args
 }()
 
-type NormalizeGamelistCommand struct {
+type NormalizeCommand struct {
 	dir     string
 	replace bool
 	dryRun  bool
 }
 
-func NewNormalizeGamelistCommand() *NormalizeGamelistCommand {
-	return &NormalizeGamelistCommand{}
+func NewNormalizeCommand() *NormalizeCommand {
+	return &NormalizeCommand{}
 }
 
-func (c *NormalizeGamelistCommand) Name() string { return "normalize-gamelist" }
+func (c *NormalizeCommand) Name() string { return "normalize" }
 
-func (c *NormalizeGamelistCommand) Desc() string {
+func (c *NormalizeCommand) Desc() string {
 	return "扫描并标准化 gamelist.xml 文件"
 }
 
-func (c *NormalizeGamelistCommand) Init(f *pflag.FlagSet) {
+func (c *NormalizeCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dir, "dir", "", "ROM 根目录")
 	f.BoolVar(&c.replace, "replace", false, "是否直接覆盖 gamelist.xml，默认写入 gamelist.xml.fix")
 	f.BoolVar(&c.dryRun, "dryrun", false, "仅模拟执行，不写入任何文件")
 }
 
-func (c *NormalizeGamelistCommand) PreRun(ctx context.Context) error {
+func (c *NormalizeCommand) PreRun(ctx context.Context) error {
 	if strings.TrimSpace(c.dir) == "" {
-		return errors.New("normalize-gamelist requires --dir")
+		return errors.New("normalize requires --dir")
 	}
-	logutil.GetLogger(ctx).Info("starting normalize-gamelist",
+	logutil.GetLogger(ctx).Info("starting normalize",
 		zap.String("dir", c.dir),
 		zap.Bool("replace", c.replace),
 		zap.Bool("dryrun", c.dryRun),
@@ -56,7 +56,7 @@ func (c *NormalizeGamelistCommand) PreRun(ctx context.Context) error {
 	return nil
 }
 
-func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
+func (c *NormalizeCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 	processed := 0
 	written := 0
@@ -114,7 +114,7 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	logger.Info("normalize-gamelist completed",
+	logger.Info("normalize completed",
 		zap.Int("gamelist_found", processed),
 		zap.Int("gamelist_written", written),
 		zap.Int("gamelist_changed", changedCount),
@@ -123,10 +123,10 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *NormalizeGamelistCommand) PostRun(ctx context.Context) error { return nil }
+func (c *NormalizeCommand) PostRun(ctx context.Context) error { return nil }
 
 func init() {
-	RegisterRunner("normalize-gamelist", func() IRunner { return NewNormalizeGamelistCommand() })
+	RegisterRunner("normalize", func() IRunner { return NewNormalizeCommand() })
 }
 
 func normalizeGameEntries(doc *metadata.GamelistDocument) bool {
