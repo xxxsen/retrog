@@ -6,13 +6,21 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"unicode"
 
+	"github.com/mozillazg/go-pinyin"
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"github.com/xxxsen/retrog/internal/constant"
 	"github.com/xxxsen/retrog/internal/metadata"
 	"go.uber.org/zap"
 )
+
+var pinyinFirstLetterArgs = func() pinyin.Args {
+	args := pinyin.NewArgs()
+	args.Style = pinyin.FirstLetter
+	return args
+}()
 
 type NormalizeGamelistCommand struct {
 	dir     string
@@ -52,6 +60,7 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 	processed := 0
 	written := 0
+	changedCount := 0
 
 	err := filepath.WalkDir(c.dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -69,6 +78,11 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 			return err
 		}
 
+		changed := normalizeGameEntries(doc)
+		if changed {
+			changedCount++
+		}
+
 		dest := path
 		if !c.replace {
 			dest = path + ".fix"
@@ -76,7 +90,11 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 
 		processed++
 		if c.dryRun {
-			logger.Info("gamelist normalize (dryrun)", zap.String("src", filepath.ToSlash(path)), zap.String("dest", filepath.ToSlash(dest)))
+			logger.Info("gamelist normalize (dryrun)",
+				zap.String("src", filepath.ToSlash(path)),
+				zap.String("dest", filepath.ToSlash(dest)),
+				zap.Bool("changed", changed),
+			)
 			return nil
 		}
 
@@ -88,6 +106,7 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 			zap.String("src", filepath.ToSlash(path)),
 			zap.String("dest", filepath.ToSlash(dest)),
 			zap.Bool("replace", c.replace),
+			zap.Bool("changed", changed),
 		)
 		return nil
 	})
@@ -98,6 +117,7 @@ func (c *NormalizeGamelistCommand) Run(ctx context.Context) error {
 	logger.Info("normalize-gamelist completed",
 		zap.Int("gamelist_found", processed),
 		zap.Int("gamelist_written", written),
+		zap.Int("gamelist_changed", changedCount),
 		zap.Bool("dry_run", c.dryRun),
 	)
 	return nil
@@ -107,4 +127,87 @@ func (c *NormalizeGamelistCommand) PostRun(ctx context.Context) error { return n
 
 func init() {
 	RegisterRunner("normalize-gamelist", func() IRunner { return NewNormalizeGamelistCommand() })
+}
+
+func normalizeGameEntries(doc *metadata.GamelistDocument) bool {
+	if doc == nil {
+		return false
+	}
+	changed := false
+	for i := range doc.Games {
+		name, updated := normalizeGameName(doc.Games[i].Name)
+		if updated && doc.Games[i].Name != name {
+			doc.Games[i].Name = name
+			changed = true
+		}
+	}
+	return changed
+}
+
+func normalizeGameName(value string) (string, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		if value == trimmed {
+			return value, false
+		}
+		return trimmed, true
+	}
+	if hasNamePrefix(trimmed) {
+		return value, false
+	}
+	prefix := determineNamePrefix(trimmed)
+	if prefix == "" {
+		return trimmed, trimmed != value
+	}
+	normalized := prefix + " " + trimmed
+	return normalized, normalized != value
+}
+
+func hasNamePrefix(name string) bool {
+	runes := []rune(name)
+	if len(runes) < 2 {
+		return false
+	}
+	if !isPrefixRune(runes[0]) {
+		return false
+	}
+	return unicode.IsSpace(runes[1])
+}
+
+func isPrefixRune(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func determineNamePrefix(name string) string {
+	for _, r := range name {
+		if unicode.IsSpace(r) {
+			continue
+		}
+		if unicode.IsDigit(r) {
+			return string(r)
+		}
+		if unicode.Is(unicode.Han, r) {
+			if letter := hanPrefix(r); letter != "" {
+				return letter
+			}
+			continue
+		}
+		if unicode.IsLetter(r) {
+			return strings.ToUpper(string(r))
+		}
+		return strings.ToUpper(string(r))
+	}
+	return ""
+}
+
+func hanPrefix(r rune) string {
+	result := pinyin.LazyPinyin(string(r), pinyinFirstLetterArgs)
+	if len(result) == 0 {
+		return ""
+	}
+	letter := result[0]
+	if letter == "" {
+		return ""
+	}
+	return strings.ToUpper(letter[:1])
 }
