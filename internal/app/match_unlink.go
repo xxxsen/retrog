@@ -1,10 +1,8 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/xxxsen/retrog/internal/constant"
 	appdb "github.com/xxxsen/retrog/internal/db"
+	"github.com/xxxsen/retrog/internal/metadata"
 	"github.com/xxxsen/retrog/internal/model"
 	"github.com/xxxsen/retrog/internal/storage"
 
@@ -195,24 +194,33 @@ func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.M
 			continue
 		}
 
-		additions := make([]string, 0, len(result.Files))
+		doc, err := metadata.ParseGamelistFile(gamelistPath)
+		if err != nil {
+			logger.Warn("parse gamelist failed, skip fix",
+				zap.String("path", filepath.ToSlash(gamelistPath)),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		extraEntries := make([]metadata.GamelistEntry, 0, len(result.Files))
 		for _, file := range result.Files {
 			meta, ok := entries[c.normalizeHash(file.Hash)]
 			if !ok {
 				continue
 			}
-			xmlSnippet, err := c.buildGameXML(ctx, store, dir, file, meta)
+			gameEntry, err := c.buildGamelistEntry(ctx, store, dir, file, meta)
 			if err != nil {
-				logger.Error("build game xml failed",
+				logger.Error("build gamelist entry failed",
 					zap.String("location", dir),
 					zap.String("rom", file.Name),
 					zap.Error(err),
 				)
 				continue
 			}
-			additions = append(additions, xmlSnippet)
+			extraEntries = append(extraEntries, *gameEntry)
 		}
-		if len(additions) == 0 {
+		if len(extraEntries) == 0 {
 			continue
 		}
 
@@ -220,18 +228,22 @@ func (c *MatchUnlinkCommand) fixGamelists(ctx context.Context, results []model.M
 		if !c.replace {
 			destPath = gamelistPath + ".fix"
 		}
-		if err := appendGamesToGamelist(gamelistPath, destPath, additions); err != nil {
+
+		updatedDoc := *doc
+		updatedDoc.Games = append(updatedDoc.Games, extraEntries...)
+
+		if err := metadata.WriteGamelistFile(destPath, &updatedDoc); err != nil {
 			return err
 		}
 		logger.Info("gamelist updated",
 			zap.String("path", filepath.ToSlash(destPath)),
-			zap.Int("added", len(additions)),
+			zap.Int("added", len(extraEntries)),
 		)
 	}
 	return nil
 }
 
-func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Client, dir string, file model.UnlinkFile, meta model.MatchedMeta) (string, error) {
+func (c *MatchUnlinkCommand) buildGamelistEntry(ctx context.Context, store storage.Client, dir string, file model.UnlinkFile, meta model.MatchedMeta) (*metadata.GamelistEntry, error) {
 	entry := meta.Entry
 	name := entry.Name
 	if strings.TrimSpace(name) == "" {
@@ -243,15 +255,15 @@ func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Cli
 
 	imagePath, err := c.downloadMedia(ctx, store, dir, constant.ImageDir, entry.Media, []string{"boxart", "boxfront", "screenshot"})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	logoPath, err := c.downloadMedia(ctx, store, dir, constant.ImageDir, entry.Media, []string{"logo"})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	videoPath, err := c.downloadMedia(ctx, store, dir, constant.VideoDir, entry.Media, []string{"video"})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var release string
@@ -259,48 +271,28 @@ func (c *MatchUnlinkCommand) buildGameXML(ctx context.Context, store storage.Cli
 		release = time.Unix(entry.ReleaseAt, 0).UTC().Format("20060102T150405")
 	}
 
-	genres := strings.Join(entry.Genres, ",")
+	genres := make([]string, 0, len(entry.Genres))
+	for _, g := range entry.Genres {
+		if trimmed := strings.TrimSpace(g); trimmed != "" {
+			genres = append(genres, trimmed)
+		}
+	}
 
-	var builder strings.Builder
-	builder.WriteString("  <game")
-	idValue := fmt.Sprintf("%d", meta.ID)
-	if strings.TrimSpace(idValue) == "" {
-		idValue = "0"
-	}
-	builder.WriteString(` id="`)
-	builder.WriteString(escapeXML(idValue))
-	builder.WriteString(`" source="retrog">`)
-	builder.WriteByte('\n')
-	writeXMLElement(&builder, "path", pathValue)
-	writeXMLElement(&builder, "name", name)
-	if desc != "" {
-		writeXMLElement(&builder, "desc", desc)
-	}
-	if imagePath != "" {
-		writeXMLElement(&builder, "image", imagePath)
-	}
-	if logoPath != "" {
-		writeXMLElement(&builder, "marquee", logoPath)
-	}
-	if videoPath != "" {
-		writeXMLElement(&builder, "video", videoPath)
-	}
-	if release != "" {
-		writeXMLElement(&builder, "releasedate", release)
-	}
-	if entry.Developer != "" {
-		writeXMLElement(&builder, "developer", entry.Developer)
-	}
-	if entry.Publisher != "" {
-		writeXMLElement(&builder, "publisher", entry.Publisher)
-	}
-	if genres != "" {
-		writeXMLElement(&builder, "genre", genres)
-	}
-	writeXMLElement(&builder, "md5", c.normalizeHash(file.Hash))
-	builder.WriteString("  </game>\n")
-
-	return builder.String(), nil
+	return &metadata.GamelistEntry{
+		ID:          fmt.Sprintf("%d", meta.ID),
+		Source:      "retrog",
+		Path:        pathValue,
+		Name:        name,
+		Description: desc,
+		Image:       imagePath,
+		Marquee:     logoPath,
+		Video:       videoPath,
+		ReleaseDate: release,
+		Developer:   entry.Developer,
+		Publisher:   entry.Publisher,
+		Genres:      genres,
+		MD5:         c.normalizeHash(file.Hash),
+	}, nil
 }
 
 func (c *MatchUnlinkCommand) downloadMedia(ctx context.Context, store storage.Client, dir string, category string, mediaList []model.MediaEntry, preferred []string) (string, error) {
@@ -337,56 +329,6 @@ func pickMedia(media []model.MediaEntry, preferred []string) *model.MediaEntry {
 				return &copy
 			}
 		}
-	}
-	return nil
-}
-
-func writeXMLElement(builder *strings.Builder, tag, value string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return
-	}
-	builder.WriteString("    <")
-	builder.WriteString(tag)
-	builder.WriteString(">")
-	builder.WriteString(escapeXML(value))
-	builder.WriteString("</")
-	builder.WriteString(tag)
-	builder.WriteString(">\n")
-}
-
-func escapeXML(value string) string {
-	var buf bytes.Buffer
-	if err := xml.EscapeText(&buf, []byte(value)); err != nil {
-		return value
-	}
-	return buf.String()
-}
-
-func appendGamesToGamelist(srcPath, destPath string, games []string) error {
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return fmt.Errorf("read gamelist %s: %w", srcPath, err)
-	}
-	closingTag := []byte("</gameList>")
-	idx := bytes.LastIndex(data, closingTag)
-	if idx == -1 {
-		return fmt.Errorf("invalid gamelist %s: missing </gameList>", srcPath)
-	}
-
-	var addition strings.Builder
-	addition.WriteByte('\n')
-	for _, game := range games {
-		addition.WriteString(game)
-	}
-
-	var output bytes.Buffer
-	output.Write(data[:idx])
-	output.WriteString(addition.String())
-	output.Write(data[idx:])
-
-	if err := os.WriteFile(destPath, output.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("write gamelist %s: %w", destPath, err)
 	}
 	return nil
 }

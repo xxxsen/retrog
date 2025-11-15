@@ -53,6 +53,7 @@ type GamelistEntry struct {
 	Manual      string    `xml:"manual"`
 	Hidden      bool      `xml:"hidden"`
 	Hash        string    `xml:"hash"`
+	MD5         string    `xml:"md5"`
 	GenreID     string    `xml:"genreid"`
 	CRC32       string    `xml:"crc32"`
 	CheevosID   string    `xml:"cheevosId"`
@@ -111,6 +112,7 @@ func ParseGamelistFile(path string) (*GamelistDocument, error) {
 		entry.SortName = strings.TrimSpace(entry.SortName)
 		entry.Manual = strings.TrimSpace(entry.Manual)
 		entry.Hash = strings.TrimSpace(entry.Hash)
+		entry.MD5 = strings.TrimSpace(entry.MD5)
 		entry.GenreID = strings.TrimSpace(entry.GenreID)
 		entry.CRC32 = strings.TrimSpace(entry.CRC32)
 		entry.CheevosID = strings.TrimSpace(entry.CheevosID)
@@ -226,6 +228,7 @@ func newOutputEntry(src GamelistEntry) gamelistOutputEntry {
 		SortName:    strings.TrimSpace(src.SortName),
 		Manual:      strings.TrimSpace(src.Manual),
 		Hash:        strings.TrimSpace(src.Hash),
+		MD5:         strings.TrimSpace(src.MD5),
 		GenreID:     strings.TrimSpace(src.GenreID),
 		CRC32:       strings.TrimSpace(src.CRC32),
 		CheevosID:   strings.TrimSpace(src.CheevosID),
@@ -310,6 +313,7 @@ type gamelistOutputEntry struct {
 	Manual      string       `xml:"manual,omitempty"`
 	Hidden      bool         `xml:"hidden,omitempty"`
 	Hash        string       `xml:"hash,omitempty"`
+	MD5         string       `xml:"md5,omitempty"`
 	GenreID     string       `xml:"genreid,omitempty"`
 	CRC32       string       `xml:"crc32,omitempty"`
 	CheevosID   string       `xml:"cheevosId,omitempty"`
