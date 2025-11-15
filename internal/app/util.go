@@ -50,7 +50,6 @@ func readFileMD5WithCache(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	if ok {
-		logutil.GetLogger(ctx).Debug("read file hash from cache", zap.String("file", path), zap.String("hash", hash))
 		return hash, nil
 	}
 	logutil.GetLogger(ctx).Info("big file cache compute", zap.String("file", path), zap.Int64("size", info.Size()))

@@ -3,3 +3,4 @@ metadata.pegasus.txt
 .vscode
 meta.json
 /gamelist-sample
+*.log
