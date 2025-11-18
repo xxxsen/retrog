@@ -4,13 +4,8 @@ import (
 	"context"
 
 	"github.com/xxxsen/retrog/internal/app"
-	"github.com/xxxsen/retrog/internal/config"
-	appdb "github.com/xxxsen/retrog/internal/db"
-	"github.com/xxxsen/retrog/internal/storage"
 
 	"github.com/spf13/cobra"
-	"github.com/xxxsen/common/database"
-	"github.com/xxxsen/common/database/sqlite"
 	"github.com/xxxsen/common/logutil"
 	"go.uber.org/zap"
 )
@@ -29,68 +24,28 @@ func Execute() error {
 	return nil
 }
 
-type InitFunc func(ctx context.Context, cc *config.Config) error
-
-func initS3(ctx context.Context, cc *config.Config) error {
-	client, err := storage.NewS3Client(ctx, cc.S3)
-	if err != nil {
-		return err
-	}
-	storage.SetDefaultClient(client)
-	return nil
-}
-
-func initDB(ctx context.Context, cc *config.Config) error {
-	dbPath := cc.DB
-	sqliteDB, err := sqlite.New(dbPath, func(db database.IDatabase) error {
-		return appdb.EnsureSchema(ctx, db)
-	})
-	if err != nil {
-		return err
-	}
-	appdb.SetDefault(sqliteDB)
-	return nil
-}
-
 func init() {
-	var cfg string
-	initfns := []InitFunc{
-		initS3,
-		initDB,
-	}
-	rootCmd.PersistentFlags().StringVar(&cfg, "config", "", "Path to configuration file")
 	for _, r := range app.RunnerList() {
 		rinst := app.MustResolveRunner(r)
+		runner := rinst
 		subcmd := &cobra.Command{
-			Use:   rinst.Name(),
-			Short: rinst.Desc(),
+			Use:   runner.Name(),
+			Short: runner.Desc(),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				//配置加载及初始化
 				ctx := context.Background()
-				cc, err := LoadConfig(cfg)
-				if err != nil {
+				if err := runner.PreRun(ctx); err != nil {
 					return err
 				}
-				for _, fn := range initfns {
-					if err := fn(ctx, cc); err != nil {
-						return err
-					}
-				}
-
-				//执行app流程
-				if err := rinst.PreRun(ctx); err != nil {
+				if err := runner.Run(ctx); err != nil {
 					return err
 				}
-				if err := rinst.Run(ctx); err != nil {
-					return err
-				}
-				if err := rinst.PostRun(ctx); err != nil {
+				if err := runner.PostRun(ctx); err != nil {
 					return err
 				}
 				return nil
 			},
 		}
-		rinst.Init(subcmd.Flags())
+		runner.Init(subcmd.Flags())
 		rootCmd.AddCommand(subcmd)
 
 	}

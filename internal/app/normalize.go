@@ -35,12 +35,12 @@ func NewNormalizeCommand() *NormalizeCommand {
 func (c *NormalizeCommand) Name() string { return "normalize" }
 
 func (c *NormalizeCommand) Desc() string {
-	return "扫描并标准化 gamelist.xml 文件"
+	return "扫描并标准化 metadata.pegasus.txt 文件"
 }
 
 func (c *NormalizeCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dir, "dir", "", "ROM 根目录")
-	f.BoolVar(&c.replace, "replace", false, "是否直接覆盖 gamelist.xml，默认写入 gamelist.xml.fix")
+	f.BoolVar(&c.replace, "replace", false, "是否直接覆盖 metadata.pegasus.txt，默认写入 metadata.pegasus.txt.fix")
 	f.BoolVar(&c.dryRun, "dryrun", false, "仅模拟执行，不写入任何文件")
 }
 
@@ -69,16 +69,16 @@ func (c *NormalizeCommand) Run(ctx context.Context) error {
 		if d.IsDir() {
 			return nil
 		}
-		if !strings.EqualFold(d.Name(), constant.DefaultGamelistFile) {
+		if !strings.EqualFold(d.Name(), constant.DefaultMetadataFile) {
 			return nil
 		}
 
-		doc, err := metadata.ParseGamelistFile(path)
+		doc, err := metadata.ParseMetadataFile(path)
 		if err != nil {
 			return err
 		}
 
-		changed := normalizeGameEntries(doc)
+		changed := normalizeMetadataGames(doc)
 		if changed {
 			changedCount++
 		}
@@ -90,7 +90,7 @@ func (c *NormalizeCommand) Run(ctx context.Context) error {
 
 		processed++
 		if c.dryRun {
-			logger.Info("gamelist normalize (dryrun)",
+			logger.Info("metadata normalize (dryrun)",
 				zap.String("src", filepath.ToSlash(path)),
 				zap.String("dest", filepath.ToSlash(dest)),
 				zap.Bool("changed", changed),
@@ -98,11 +98,11 @@ func (c *NormalizeCommand) Run(ctx context.Context) error {
 			return nil
 		}
 
-		if err := metadata.WriteGamelistFile(dest, doc); err != nil {
+		if err := metadata.WriteMetadataFile(dest, doc); err != nil {
 			return err
 		}
 		written++
-		logger.Info("gamelist normalized",
+		logger.Info("metadata normalized",
 			zap.String("src", filepath.ToSlash(path)),
 			zap.String("dest", filepath.ToSlash(dest)),
 			zap.Bool("replace", c.replace),
@@ -115,9 +115,9 @@ func (c *NormalizeCommand) Run(ctx context.Context) error {
 	}
 
 	logger.Info("normalize completed",
-		zap.Int("gamelist_found", processed),
-		zap.Int("gamelist_written", written),
-		zap.Int("gamelist_changed", changedCount),
+		zap.Int("metadata_found", processed),
+		zap.Int("metadata_written", written),
+		zap.Int("metadata_changed", changedCount),
 		zap.Bool("dry_run", c.dryRun),
 	)
 	return nil
@@ -129,15 +129,23 @@ func init() {
 	RegisterRunner("normalize", func() IRunner { return NewNormalizeCommand() })
 }
 
-func normalizeGameEntries(doc *metadata.GamelistDocument) bool {
+func normalizeMetadataGames(doc *metadata.Document) bool {
 	if doc == nil {
 		return false
 	}
 	changed := false
-	for i := range doc.Games {
-		name, updated := normalizeGameName(doc.Games[i].Name)
-		if updated && doc.Games[i].Name != name {
-			doc.Games[i].Name = name
+	for _, block := range doc.Blocks {
+		if block == nil || block.Kind != metadata.KindGame {
+			continue
+		}
+		entry := block.Entry("game")
+		if entry == nil || len(entry.Values) == 0 {
+			continue
+		}
+		original := strings.Join(entry.Values, "\n")
+		name, updated := normalizeGameName(original)
+		if updated && original != name {
+			entry.Values = []string{name}
 			changed = true
 		}
 	}
