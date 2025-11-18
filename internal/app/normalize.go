@@ -23,9 +23,10 @@ var pinyinFirstLetterArgs = func() pinyin.Args {
 }()
 
 type NormalizeCommand struct {
-	dir     string
-	replace bool
-	dryRun  bool
+	dir            string
+	replace        bool
+	dryRun         bool
+	addAlphaPrefix bool
 }
 
 func NewNormalizeCommand() *NormalizeCommand {
@@ -42,6 +43,7 @@ func (c *NormalizeCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dir, "dir", "", "ROM 根目录")
 	f.BoolVar(&c.replace, "replace", false, "是否直接覆盖 metadata.pegasus.txt，默认写入 metadata.pegasus.txt.fix")
 	f.BoolVar(&c.dryRun, "dryrun", false, "仅模拟执行，不写入任何文件")
+	f.BoolVar(&c.addAlphaPrefix, "add-alpha-prefix", false, "是否为名称增加首字母前缀")
 }
 
 func (c *NormalizeCommand) PreRun(ctx context.Context) error {
@@ -78,7 +80,7 @@ func (c *NormalizeCommand) Run(ctx context.Context) error {
 			return err
 		}
 
-		changed := normalizeMetadataGames(doc)
+		changed := normalizeMetadataGames(doc, c.addAlphaPrefix)
 		if changed {
 			changedCount++
 		}
@@ -129,7 +131,7 @@ func init() {
 	RegisterRunner("normalize", func() IRunner { return NewNormalizeCommand() })
 }
 
-func normalizeMetadataGames(doc *metadata.Document) bool {
+func normalizeMetadataGames(doc *metadata.Document, addPrefix bool) bool {
 	if doc == nil {
 		return false
 	}
@@ -143,7 +145,7 @@ func normalizeMetadataGames(doc *metadata.Document) bool {
 			continue
 		}
 		original := strings.Join(entry.Values, "\n")
-		name, updated := normalizeGameName(original)
+		name, updated := normalizeGameName(original, addPrefix)
 		if updated && original != name {
 			entry.Values = []string{name}
 			changed = true
@@ -152,7 +154,7 @@ func normalizeMetadataGames(doc *metadata.Document) bool {
 	return changed
 }
 
-func normalizeGameName(value string) (string, bool) {
+func normalizeGameName(value string, addPrefix bool) (string, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		if value == trimmed {
@@ -160,15 +162,18 @@ func normalizeGameName(value string) (string, bool) {
 		}
 		return trimmed, true
 	}
-	if hasGameNamePrefix(trimmed) {
+	if addPrefix && hasGameNamePrefix(trimmed) {
 		return value, false
 	}
-	prefix := determineNamePrefix(trimmed)
-	if prefix == "" {
-		return trimmed, trimmed != value
+	if addPrefix {
+		prefix := determineNamePrefix(trimmed)
+		if prefix == "" {
+			return trimmed, trimmed != value
+		}
+		normalized := prefix + " " + trimmed
+		return normalized, normalized != value
 	}
-	normalized := prefix + " " + trimmed
-	return normalized, normalized != value
+	return trimmed, trimmed != value
 }
 
 func determineNamePrefix(name string) string {
