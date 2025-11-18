@@ -226,9 +226,6 @@ func WriteMetadataFile(path string, doc *Document) error {
 				buf.WriteString(entry.Values[idx])
 				buf.WriteByte('\n')
 			}
-			if len(entry.Values) == 0 {
-				buf.WriteByte('\n')
-			}
 		}
 	}
 
