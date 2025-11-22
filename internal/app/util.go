@@ -25,16 +25,6 @@ func hasGameNamePrefix(name string) bool {
 	return unicode.IsSpace(runes[1])
 }
 
-func stripGameNamePrefix(name string) (string, bool) {
-	trimmed := strings.TrimSpace(name)
-	if !hasGameNamePrefix(trimmed) {
-		return trimmed, false
-	}
-	runes := []rune(trimmed)
-	body := strings.TrimLeftFunc(string(runes[2:]), unicode.IsSpace)
-	return body, true
-}
-
 func isGameNamePrefixRune(r rune) bool {
 	return (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
