@@ -11,9 +11,14 @@
 <body>
   <div id="app">
     <aside class="collections-panel">
-      <div class="panel-header">
-        <h1>合集</h1>
-        <p class="panel-subtitle">点击左侧合集查看游戏</p>
+      <div class="panel-header with-action">
+        <div>
+          <h1>合集</h1>
+          <p class="panel-subtitle">点击左侧合集查看游戏</p>
+        </div>
+        <div class="panel-actions">
+          <button type="button" id="edit-collection" class="ghost">编辑</button>
+        </div>
       </div>
       <ul id="collection-list" class="list"></ul>
       <div id="collection-empty" class="empty-state">未在目录中找到 metadata.pegasus.txt</div>
@@ -84,6 +89,104 @@
         </div>
       </form>
       <div id="edit-status" class="edit-status"></div>
+    </div>
+  </div>
+  <div id="collection-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>编辑合集元信息</h3>
+        <button type="button" id="collection-close">×</button>
+      </div>
+      <form id="collection-form" class="edit-form collection-form">
+        <div class="collection-fields">
+          <div class="collection-field-row">
+            <label for="collection-x-index-id" class="collection-field-key">x-index-id</label>
+            <div class="collection-field-value">
+              <input id="collection-x-index-id" type="text" readonly />
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-name" class="collection-field-key">name</label>
+            <div class="collection-field-value">
+              <input id="collection-name" type="text" placeholder="合集名称" />
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-sortby" class="collection-field-key">sort-by</label>
+            <div class="collection-field-value">
+              <input id="collection-sortby" type="text" placeholder="排序值" />
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-extensions" class="collection-field-key">extensions</label>
+            <div class="collection-field-value">
+              <textarea id="collection-extensions" placeholder="每行一个扩展名"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-ignore-extensions" class="collection-field-key">ignore_extensions</label>
+            <div class="collection-field-value">
+              <textarea id="collection-ignore-extensions" placeholder="每行一个扩展名"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-ignore-files" class="collection-field-key">ignore_files</label>
+            <div class="collection-field-value">
+              <textarea id="collection-ignore-files" placeholder="每行一个文件"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-files" class="collection-field-key">files</label>
+            <div class="collection-field-value">
+              <textarea id="collection-files" placeholder="每行一个文件"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-regex" class="collection-field-key">regex</label>
+            <div class="collection-field-value">
+              <textarea id="collection-regex" placeholder="每行一个正则"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-short-name" class="collection-field-key">short_name</label>
+            <div class="collection-field-value">
+              <input id="collection-short-name" type="text" placeholder="短名称" />
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-summary" class="collection-field-key">summary</label>
+            <div class="collection-field-value">
+              <textarea id="collection-summary" placeholder="摘要"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-description" class="collection-field-key">description</label>
+            <div class="collection-field-value">
+              <textarea id="collection-description" class="tall" placeholder="描述"></textarea>
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-workdir" class="collection-field-key">workdir</label>
+            <div class="collection-field-value">
+              <input id="collection-workdir" type="text" placeholder="工作目录" />
+            </div>
+          </div>
+          <div class="collection-field-row">
+            <label for="collection-launch" class="collection-field-key">launch</label>
+            <div class="collection-field-value">
+              <textarea id="collection-launch" placeholder="启动命令"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="edit-actions">
+          <div class="left"></div>
+          <div class="right">
+            <button type="button" id="collection-cancel">取消</button>
+            <button type="submit">保存</button>
+          </div>
+        </div>
+      </form>
+      <div id="collection-status" class="edit-status"></div>
     </div>
   </div>
   <div id="delete-modal" class="modal hidden">

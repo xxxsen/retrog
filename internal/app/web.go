@@ -40,16 +40,18 @@ type WebCommand struct {
 }
 
 type collectionPayload struct {
-	ID           string         `json:"id"`
-	Index        int            `json:"index"`
-	Name         string         `json:"name"`
-	DirName      string         `json:"dir_name"`
-	DisplayName  string         `json:"display_name"`
-	MetadataPath string         `json:"metadata_path"`
-	RelativePath string         `json:"relative_path"`
-	SortKey      string         `json:"sort_key"`
-	Extensions   []string       `json:"extensions,omitempty"`
-	Games        []*gamePayload `json:"games"`
+	ID           string          `json:"id"`
+	Index        int             `json:"index"`
+	XIndexID     int             `json:"x_index_id"`
+	Name         string          `json:"name"`
+	DirName      string          `json:"dir_name"`
+	DisplayName  string          `json:"display_name"`
+	MetadataPath string          `json:"metadata_path"`
+	RelativePath string          `json:"relative_path"`
+	SortKey      string          `json:"sort_key"`
+	Extensions   []string        `json:"extensions,omitempty"`
+	Fields       []*fieldPayload `json:"fields"`
+	Games        []*gamePayload  `json:"games"`
 }
 
 type gamePayload struct {
@@ -79,7 +81,7 @@ type assetPayload struct {
 	FileName string `json:"file_name"`
 }
 
-const gameIndexEntryKey = "x-index-id"
+const xIndexEntryKey = "x-index-id"
 const stagedUploadPrefix = "__upload__/"
 
 type updateGameRequest struct {
@@ -104,6 +106,16 @@ type gameUpdateResponse struct {
 type uploadMediaResponse struct {
 	FilePath string        `json:"file_path"`
 	Asset    *assetPayload `json:"asset"`
+}
+
+type updateCollectionRequest struct {
+	MetadataPath string          `json:"metadata_path"`
+	XIndexID     int             `json:"x_index_id"`
+	Fields       []*fieldPayload `json:"fields"`
+}
+
+type collectionUpdateResponse struct {
+	Collection *collectionPayload `json:"collection"`
 }
 
 type fallbackAssetField struct {
@@ -188,6 +200,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 		return err
 	}
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.HandleFunc("/api/collections/update", c.handleUpdateCollection)
 	mux.HandleFunc("/api/collections", c.handleCollections)
 	mux.HandleFunc("/api/assets/", c.handleAsset)
 	mux.HandleFunc("/api/games/update", c.handleUpdateGame)
@@ -244,6 +257,42 @@ func (c *WebCommand) handleCollections(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(c.collectionsSnapshot())
+}
+
+func (c *WebCommand) handleUpdateCollection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req updateCollectionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+	metadataPath, err := c.resolveMetadataPath(req.MetadataPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.XIndexID <= 0 {
+		http.Error(w, "x_index_id must be positive", http.StatusBadRequest)
+		return
+	}
+	if err := c.updateCollectionMetadata(metadataPath, req.XIndexID, req.Fields); err != nil {
+		http.Error(w, fmt.Sprintf("update collection failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := c.reloadCollections(r.Context()); err != nil {
+		http.Error(w, fmt.Sprintf("reload collections failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	coll := c.findCollectionByIndex(filepath.ToSlash(metadataPath), req.XIndexID)
+	if coll == nil {
+		http.Error(w, "collection not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(&collectionUpdateResponse{Collection: coll})
 }
 
 func (c *WebCommand) handleAsset(w http.ResponseWriter, r *http.Request) {
@@ -519,6 +568,21 @@ func (c *WebCommand) findCollectionByPath(metadataPath string) *collectionPayloa
 	return nil
 }
 
+func (c *WebCommand) findCollectionByIndex(metadataPath string, xIndexID int) *collectionPayload {
+	metadataPath = filepath.ToSlash(metadataPath)
+	c.dataMu.RLock()
+	defer c.dataMu.RUnlock()
+	for _, coll := range c.collections {
+		if coll == nil {
+			continue
+		}
+		if filepath.ToSlash(coll.MetadataPath) == metadataPath && coll.XIndexID == xIndexID {
+			return coll
+		}
+	}
+	return nil
+}
+
 func (c *WebCommand) resolveMetadataPath(meta string) (string, error) {
 	meta = strings.TrimSpace(meta)
 	if meta == "" {
@@ -556,12 +620,17 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 			logger.Error("parse metadata failed", zap.String("path", path), zap.Error(err))
 			return nil
 		}
-		changed, err := ensureGameIndexes(doc)
+		collChanged, err := ensureCollectionIndexes(doc)
+		if err != nil {
+			logger.Error("ensure collection indexes failed", zap.String("path", path), zap.Error(err))
+			return nil
+		}
+		gameChanged, err := ensureGameIndexes(doc)
 		if err != nil {
 			logger.Error("ensure game indexes failed", zap.String("path", path), zap.Error(err))
 			return nil
 		}
-		if changed {
+		if collChanged || gameChanged {
 			if err := metadata.WriteMetadataFile(path, doc); err != nil {
 				logger.Error("write metadata failed", zap.String("path", path), zap.Error(err))
 				return nil
@@ -594,6 +663,45 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 	return result, nil
 }
 
+func ensureCollectionIndexes(doc *metadata.Document) (bool, error) {
+	if doc == nil {
+		return false, nil
+	}
+	used := make(map[int]struct{})
+	maxID := 0
+	changed := false
+	for _, blk := range doc.Blocks {
+		if blk == nil || blk.Kind != metadata.KindCollection {
+			continue
+		}
+		entry := blk.Entry(xIndexEntryKey)
+		id, ok := parseXIndexEntry(entry)
+		if ok {
+			if id > maxID {
+				maxID = id
+			}
+			if _, exists := used[id]; exists {
+				ok = false
+			} else {
+				used[id] = struct{}{}
+				normalized := strconv.Itoa(id)
+				if len(entry.Values) == 0 || entry.Values[0] != normalized || !entry.Inline {
+					entry.Values = []string{normalized}
+					entry.Inline = true
+					changed = true
+				}
+			}
+		}
+		if !ok {
+			maxID++
+			setBlockXIndexID(blk, maxID)
+			used[maxID] = struct{}{}
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
 func ensureGameIndexes(doc *metadata.Document) (bool, error) {
 	if doc == nil {
 		return false, nil
@@ -605,7 +713,7 @@ func ensureGameIndexes(doc *metadata.Document) (bool, error) {
 		if blk == nil || blk.Kind != metadata.KindGame {
 			continue
 		}
-		entry := blk.Entry(gameIndexEntryKey)
+		entry := blk.Entry(xIndexEntryKey)
 		id, ok := parseXIndexEntry(entry)
 		if ok {
 			if id > maxID {
@@ -638,14 +746,14 @@ func setBlockXIndexID(blk *metadata.Block, id int) {
 		return
 	}
 	value := strconv.Itoa(id)
-	entry := blk.Entry(gameIndexEntryKey)
+	entry := blk.Entry(xIndexEntryKey)
 	if entry != nil {
 		entry.Values = []string{value}
 		entry.Inline = true
 		return
 	}
 	newEntry := &metadata.Entry{
-		Key:    gameIndexEntryKey,
+		Key:    xIndexEntryKey,
 		Values: []string{value},
 		Inline: true,
 	}
@@ -668,7 +776,7 @@ func blockXIndexID(blk *metadata.Block) int {
 	if blk == nil {
 		return 0
 	}
-	if entry := blk.Entry(gameIndexEntryKey); entry != nil {
+	if entry := blk.Entry(xIndexEntryKey); entry != nil {
 		if id, ok := parseXIndexEntry(entry); ok {
 			return id
 		}
@@ -717,6 +825,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 			}
 			current = &collectionPayload{
 				Index:        collectionOrder,
+				XIndexID:     blockXIndexID(blk),
 				Name:         name,
 				DirName:      dirName,
 				DisplayName:  fmt.Sprintf("%s(%s)", name, dirName),
@@ -724,6 +833,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				RelativePath: relDir,
 				SortKey:      strings.TrimSpace(typed.SortBy),
 				Extensions:   parseCollectionExtensions(blk),
+				Fields:       convertBlockFields(blk),
 			}
 			result = append(result, current)
 		case metadata.KindGame:
@@ -1033,14 +1143,14 @@ func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, field
 	if err := c.handleRemovedFields(metadataPath, doc, block, removed); err != nil {
 		return err
 	}
-	order, updates, err := combineFieldValues(fields)
+	order, updates, err := combineFieldValues(fields, "game")
 	if err != nil {
 		return err
 	}
 	if err := validateRequiredGameFields(updates); err != nil {
 		return err
 	}
-	entries, err := rebuildBlockEntries(block.Entries, order, updates)
+	entries, err := rebuildBlockEntries(block.Entries, order, updates, "game")
 	if err != nil {
 		return err
 	}
@@ -1066,14 +1176,14 @@ func (c *WebCommand) createGame(metadataPath string, xIndexID int, fields []*fie
 	if err != nil {
 		return 0, err
 	}
-	order, updates, err := combineFieldValues(fields)
+	order, updates, err := combineFieldValues(fields, "game")
 	if err != nil {
 		return 0, err
 	}
 	if err := validateRequiredGameFields(updates); err != nil {
 		return 0, err
 	}
-	entries, err := rebuildBlockEntries(blk.Entries, order, updates)
+	entries, err := rebuildBlockEntries(blk.Entries, order, updates, "game")
 	if err != nil {
 		return 0, err
 	}
@@ -1093,7 +1203,7 @@ func nextGameIndexID(doc *metadata.Document) int {
 		if blk == nil || blk.Kind != metadata.KindGame {
 			continue
 		}
-		if entry := blk.Entry(gameIndexEntryKey); entry != nil {
+		if entry := blk.Entry(xIndexEntryKey); entry != nil {
 			if id, ok := parseXIndexEntry(entry); ok && id > maxID {
 				maxID = id
 			}
@@ -1133,10 +1243,50 @@ func findGameBlockByIndexID(doc *metadata.Document, xIndexID int) (*metadata.Blo
 	return nil, -1, fmt.Errorf("game with x-index-id %d not found", xIndexID)
 }
 
-func combineFieldValues(fields []*fieldPayload) ([]string, map[string][]string, error) {
+func findCollectionBlockByIndexID(doc *metadata.Document, xIndexID int) (*metadata.Block, int, error) {
+	if doc == nil {
+		return nil, -1, errors.New("metadata document is empty")
+	}
+	for idx, blk := range doc.Blocks {
+		if blk == nil || blk.Kind != metadata.KindCollection {
+			continue
+		}
+		if blockXIndexID(blk) == xIndexID {
+			return blk, idx, nil
+		}
+	}
+	return nil, -1, fmt.Errorf("collection with x-index-id %d not found", xIndexID)
+}
+
+func (c *WebCommand) updateCollectionMetadata(metadataPath string, xIndexID int, fields []*fieldPayload) error {
+	doc, err := metadata.ParseMetadataFile(metadataPath)
+	if err != nil {
+		return err
+	}
+	block, _, err := findCollectionBlockByIndexID(doc, xIndexID)
+	if err != nil {
+		return err
+	}
+	order, updates, err := combineFieldValues(fields, "collection")
+	if err != nil {
+		return err
+	}
+	if err := validateRequiredCollectionFields(updates); err != nil {
+		return err
+	}
+	entries, err := rebuildBlockEntries(block.Entries, order, updates, "collection")
+	if err != nil {
+		return err
+	}
+	block.Entries = entries
+	return metadata.WriteMetadataFile(metadataPath, doc)
+}
+
+func combineFieldValues(fields []*fieldPayload, requiredKey string) ([]string, map[string][]string, error) {
 	order := make([]string, 0, len(fields))
 	values := make(map[string][]string)
-	hasGame := false
+	hasRequired := false
+	requiredKey = strings.ToLower(strings.TrimSpace(requiredKey))
 	for _, field := range fields {
 		if field == nil {
 			continue
@@ -1154,19 +1304,20 @@ func combineFieldValues(fields []*fieldPayload) ([]string, map[string][]string, 
 			order = append(order, key)
 		}
 		values[key] = append(values[key], normalized...)
-		if key == "game" {
-			hasGame = true
+		if requiredKey != "" && key == requiredKey {
+			hasRequired = true
 		}
 	}
-	if !hasGame {
-		return nil, nil, errors.New("game entry is required")
+	if requiredKey != "" && !hasRequired {
+		return nil, nil, fmt.Errorf("%s entry is required", requiredKey)
 	}
 	return order, values, nil
 }
 
-func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map[string][]string) ([]*metadata.Entry, error) {
+func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map[string][]string, requiredKey string) ([]*metadata.Entry, error) {
 	entries := make([]*metadata.Entry, 0, len(original)+len(updates))
 	used := make(map[string]bool)
+	requiredKey = strings.ToLower(strings.TrimSpace(requiredKey))
 	for _, entry := range original {
 		if entry == nil {
 			continue
@@ -1179,8 +1330,8 @@ func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map
 			used[key] = true
 			continue
 		}
-		if key == "game" {
-			return nil, errors.New("game entry is required")
+		if key == requiredKey && requiredKey != "" {
+			return nil, fmt.Errorf("%s entry is required", requiredKey)
 		}
 		// field removed
 	}
@@ -1198,18 +1349,20 @@ func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map
 			Inline: len(vals) == 1,
 		})
 	}
-	gameIdx := -1
+	requiredIdx := -1
 	for idx, entry := range entries {
-		if entry != nil && entry.Key == "game" {
-			gameIdx = idx
+		if entry != nil && entry.Key == requiredKey && requiredKey != "" {
+			requiredIdx = idx
 			break
 		}
 	}
-	if gameIdx == -1 {
-		return nil, errors.New("game entry is required")
-	}
-	if gameIdx != 0 {
-		entries[0], entries[gameIdx] = entries[gameIdx], entries[0]
+	if requiredKey != "" {
+		if requiredIdx == -1 {
+			return nil, fmt.Errorf("%s entry is required", requiredKey)
+		}
+		if requiredIdx != 0 {
+			entries[0], entries[requiredIdx] = entries[requiredIdx], entries[0]
+		}
 	}
 	return entries, nil
 }
@@ -1227,6 +1380,13 @@ func validateRequiredGameFields(fields map[string][]string) error {
 	}
 	if len(trimAndFilter(fields["assets.boxfront"])) == 0 {
 		return errors.New("assets.boxFront field is required")
+	}
+	return nil
+}
+
+func validateRequiredCollectionFields(fields map[string][]string) error {
+	if len(trimAndFilter(fields["collection"])) == 0 {
+		return errors.New("collection field is required")
 	}
 	return nil
 }

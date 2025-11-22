@@ -20,6 +20,12 @@
   const deleteCancel = document.getElementById("delete-cancel");
   let deleteStatus = document.getElementById("delete-status");
   const deleteRemoveFiles = document.getElementById("delete-remove-files");
+  const editCollectionButton = document.getElementById("edit-collection");
+  const collectionModal = document.getElementById("collection-modal");
+  const collectionForm = document.getElementById("collection-form");
+  const collectionStatus = document.getElementById("collection-status");
+  const collectionClose = document.getElementById("collection-close");
+  const collectionCancel = document.getElementById("collection-cancel");
   const editModal = document.getElementById("edit-modal");
   const editForm = document.getElementById("edit-form");
   const editFields = document.getElementById("edit-fields");
@@ -28,6 +34,21 @@
   const editClose = document.getElementById("edit-close");
   const editStatus = document.getElementById("edit-status");
   const INDEX_FIELD_KEY = "x-index-id";
+  const COLLECTION_FIELD_CONFIG = [
+    { id: "collection-x-index-id", key: "x-index-id", readonly: true },
+    { id: "collection-name", key: "collection" },
+    { id: "collection-sortby", key: "sort-by", aliases: ["sortby"] },
+    { id: "collection-extensions", key: "extensions", aliases: ["extension"] },
+    { id: "collection-ignore-extensions", key: "ignore-extensions", aliases: ["ignore-extension"] },
+    { id: "collection-ignore-files", key: "ignore-files", aliases: ["ignore-file"] },
+    { id: "collection-files", key: "files", aliases: ["file"] },
+    { id: "collection-regex", key: "regex" },
+    { id: "collection-short-name", key: "shortname", aliases: ["short_name"] },
+    { id: "collection-summary", key: "summary" },
+    { id: "collection-description", key: "description", aliases: ["desc"] },
+    { id: "collection-workdir", key: "workdir", aliases: ["cwd"] },
+    { id: "collection-launch", key: "launch", aliases: ["command"] },
+  ];
   const KNOWN_GAME_FIELDS = [
     "game",
     "sort-by",
@@ -68,6 +89,7 @@
   const duplicateRows = new Set();
   let removedFields = [];
   let editContext = null;
+  let collectionEditContext = null;
   const collectionExtensions = new Map();
 
   let collections = [];
@@ -497,13 +519,20 @@
     if (!updated) {
       return;
     }
-    const idx = collections.findIndex(
-      (c) => c.metadata_path === updated.metadata_path && c.index === updated.index,
-    );
+    const idx = collections.findIndex((c) => {
+      if (updated.x_index_id && c.x_index_id) {
+        return c.metadata_path === updated.metadata_path && c.x_index_id === updated.x_index_id;
+      }
+      return c.metadata_path === updated.metadata_path && c.index === updated.index;
+    });
     if (idx === -1) {
       collections.push(updated);
     } else {
+      const prevId = collections[idx] ? collections[idx].id : "";
       collections[idx] = updated;
+      if (prevId && currentCollectionId === prevId) {
+        currentCollectionId = updated.id;
+      }
     }
     buildCollectionExtensionMap();
     populateCollectionFilterOptions();
@@ -862,6 +891,22 @@
     );
   }
 
+  function findFieldByKeyWithAliases(fields, key, aliases = []) {
+    const direct = findFieldByKey(fields, key);
+    if (direct) {
+      return direct;
+    }
+    if (Array.isArray(aliases)) {
+      for (const alias of aliases) {
+        const match = findFieldByKey(fields, alias);
+        if (match) {
+          return match;
+        }
+      }
+    }
+    return null;
+  }
+
   function createEditableFieldRow(field = { key: "", values: [] }, options = {}) {
     const row = document.createElement("div");
     row.className = "edit-field-row";
@@ -1010,6 +1055,116 @@
     deleteStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
   }
 
+  function setCollectionStatus(message, isError = false) {
+    if (!collectionStatus) {
+      return;
+    }
+    collectionStatus.textContent = message || "";
+    collectionStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
+  }
+
+  function openCollectionModal(collection) {
+    if (!collectionModal) {
+      return;
+    }
+    if (!collection) {
+      setCollectionStatus("请选择需要编辑的合集", true);
+      return;
+    }
+    collectionEditContext = {
+      metadata_path: collection.metadata_path,
+      x_index_id: collection.x_index_id,
+      originalFields: Array.isArray(collection.fields)
+        ? collection.fields.map((field) => ({
+            key: field?.key || "",
+            values: Array.isArray(field?.values) ? [...field.values] : [],
+          }))
+        : [],
+    };
+    populateCollectionForm(collection);
+    setCollectionStatus("");
+    collectionModal.classList.remove("hidden");
+  }
+
+  function closeCollectionModal() {
+    if (collectionModal) {
+      collectionModal.classList.add("hidden");
+    }
+    if (collectionForm) {
+      collectionForm.reset();
+    }
+    collectionEditContext = null;
+    setCollectionStatus("");
+  }
+
+  function populateCollectionForm(collection) {
+    COLLECTION_FIELD_CONFIG.forEach((cfg) => {
+      const el = document.getElementById(cfg.id);
+      if (!el) {
+        return;
+      }
+      const field = findFieldByKeyWithAliases(collection?.fields, cfg.key, cfg.aliases || []);
+      el.value = field && Array.isArray(field.values) ? field.values.join("\n") : "";
+      if (cfg.readonly) {
+        el.readOnly = true;
+        el.classList.add("readonly");
+      } else {
+        el.readOnly = false;
+        el.classList.remove("readonly");
+      }
+    });
+  }
+
+  function gatherCollectionFieldPayload() {
+    const payload = [];
+    const pending = [];
+    const handledKeys = new Set();
+    COLLECTION_FIELD_CONFIG.forEach((cfg) => {
+      const el = document.getElementById(cfg.id);
+      if (!el) {
+        return;
+      }
+      const raw = (el.value || "").replace(/\r/g, "");
+      const values = raw
+        .split("\n")
+        .map((v) => v.trim())
+        .filter((v) => v.length);
+      const canonicalKey = (cfg.key || "").toLowerCase();
+      handledKeys.add(canonicalKey);
+      if (Array.isArray(cfg.aliases)) {
+        cfg.aliases.forEach((alias) => handledKeys.add(String(alias || "").toLowerCase()));
+      }
+      if (values.length) {
+        pending.push({ key: cfg.key, values });
+      }
+    });
+    const original = Array.isArray(collectionEditContext?.originalFields)
+      ? collectionEditContext.originalFields
+      : [];
+    original.forEach((field) => {
+      if (!field || !field.key) {
+        return;
+      }
+      const lower = field.key.toLowerCase();
+      if (handledKeys.has(lower)) {
+        return;
+      }
+      payload.push({
+        key: field.key,
+        values: Array.isArray(field.values) ? field.values.map((value) => value) : [],
+      });
+    });
+    return payload.concat(pending);
+  }
+
+  function validateCollectionFieldsForSave(fields) {
+    const collectionField = findFieldInPayload(fields, "collection");
+    if (!hasNonEmptyValue(collectionField)) {
+      return "name 字段不能为空";
+    }
+    return "";
+  }
+
   async function handleEditSubmit(event) {
     event.preventDefault();
     if (duplicateRows.size > 0) {
@@ -1097,6 +1252,80 @@
       renderGames();
       renderFields();
       renderMedia();
+    });
+  }
+
+  if (editCollectionButton) {
+    editCollectionButton.addEventListener("click", () => {
+      const collection = getCurrentCollection();
+      if (!collection) {
+        setCollectionStatus("请选择需要编辑的合集", true);
+        return;
+      }
+      openCollectionModal(collection);
+    });
+  }
+
+  if (collectionClose) {
+    collectionClose.addEventListener("click", closeCollectionModal);
+  }
+
+  if (collectionCancel) {
+    collectionCancel.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeCollectionModal();
+    });
+  }
+
+  if (collectionModal) {
+    collectionModal.addEventListener("click", (event) => {
+      if (event.target === collectionModal) {
+        closeCollectionModal();
+      }
+    });
+  }
+
+  if (collectionForm) {
+    collectionForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!collectionEditContext) {
+        setCollectionStatus("请选择需要编辑的合集", true);
+        return;
+      }
+      const fieldsPayload = gatherCollectionFieldPayload();
+      const validationError = validateCollectionFieldsForSave(fieldsPayload);
+      if (validationError) {
+        setCollectionStatus(validationError, true);
+        return;
+      }
+      setCollectionStatus("保存中...");
+      try {
+        const res = await fetch("/api/collections/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            metadata_path: collectionEditContext.metadata_path,
+            x_index_id: collectionEditContext.x_index_id,
+            fields: fieldsPayload,
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "保存失败");
+        }
+        const data = await res.json();
+        applyCollectionUpdate(data.collection);
+        if (data.collection && data.collection.id) {
+          currentCollectionId = data.collection.id;
+        }
+        renderCollections();
+        renderGames();
+        renderFields();
+        renderMedia();
+        closeCollectionModal();
+      } catch (err) {
+        setCollectionStatus(err.message || "保存失败", true);
+      }
     });
   }
 

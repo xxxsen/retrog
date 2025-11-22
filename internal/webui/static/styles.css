@@ -379,6 +379,57 @@ section {
   gap: 12px;
 }
 
+.collection-form .collection-fields {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.collection-field-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 35%) minmax(200px, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.collection-field-key {
+  font-weight: 600;
+  color: var(--text-muted);
+  display: block;
+}
+
+.collection-field-value input,
+.collection-field-value textarea {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b121d;
+  color: var(--text-main);
+  padding: 6px 8px;
+  font-family: inherit;
+  width: 100%;
+}
+
+.collection-field-value textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+
+.collection-field-value textarea.tall {
+  min-height: 140px;
+}
+
+.collection-field-value input.readonly,
+.collection-field-value textarea.readonly {
+  background: #101623;
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
 
 .edit-fields {
   max-height: 420px;
