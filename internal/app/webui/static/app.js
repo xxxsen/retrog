@@ -57,6 +57,8 @@
     "assets.video",
   ];
   const rowState = new WeakMap();
+  let removedFields = [];
+  const collectionExtensions = new Map();
 
   let collections = [];
   let currentCollectionId = null;
@@ -71,12 +73,38 @@
         throw new Error(`HTTP ${res.status}`);
       }
       collections = await res.json();
+      buildCollectionExtensionMap();
       populateCollectionFilterOptions();
       renderCollections();
     } catch (err) {
       collectionEmpty.textContent = `加载合集失败: ${err.message}`;
       collectionEmpty.style.display = "block";
     }
+  }
+
+  function buildCollectionExtensionMap() {
+    collectionExtensions.clear();
+    collections.forEach((collection) => {
+      if (!collection || !collection.id) {
+        return;
+      }
+      if (!Array.isArray(collection.extensions)) {
+        collectionExtensions.set(collection.id, []);
+        return;
+      }
+      const normalized = collection.extensions
+        .map((ext) => (ext == null ? "" : String(ext).trim().toLowerCase()))
+        .filter((ext) => ext.length)
+        .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
+      collectionExtensions.set(collection.id, normalized);
+    });
+  }
+
+  function getCollectionExtensions(collectionId) {
+    if (!collectionId) {
+      return [];
+    }
+    return collectionExtensions.get(collectionId) || [];
   }
 
   function populateCollectionFilterOptions() {
@@ -176,6 +204,15 @@
 
   function isAssetKey(key) {
     return Boolean(key) && key.toLowerCase().startsWith("assets.");
+  }
+
+  function isFileKey(key) {
+    const lower = key ? key.toLowerCase() : "";
+    return lower === "file" || lower === "files";
+  }
+
+  function isUploadableKey(key) {
+    return isAssetKey(key) || isFileKey(key);
   }
 
   function assetNameFromKey(key) {
@@ -329,6 +366,7 @@
     } else {
       collections[idx] = updated;
     }
+    buildCollectionExtensionMap();
     populateCollectionFilterOptions();
   }
 
@@ -350,6 +388,23 @@
     return rowState.get(row) || {};
   }
 
+  function recordRemovedField(row) {
+    if (!row) {
+      return;
+    }
+    const key = (row.dataset.key || "").trim();
+    if (!key) {
+      return;
+    }
+    const state = getRowState(row);
+    const valueArea = state.valueArea;
+    const values =
+      valueArea && typeof valueArea.value === "string"
+        ? valueArea.value.replace(/\r/g, "").split("\n").map((v) => v.trim()).filter((v) => v.length)
+        : [];
+    removedFields.push({ key, values });
+  }
+
   function updateRowKey(row, newKey, game) {
     const state = getRowState(row);
     const rawKey = (newKey || "").trim();
@@ -362,7 +417,7 @@
     if (state.keySelect && state.keySelect.value !== rawKey) {
       state.keySelect.value = rawKey;
     }
-    if (isAssetKey(normalized)) {
+    if (isUploadableKey(normalized)) {
       if (state.uploadControls) {
         state.uploadControls.classList.remove("hidden");
       }
@@ -444,7 +499,7 @@
 
   function startRowUpload(row) {
     const key = (row.dataset.key || "").trim().toLowerCase();
-    if (!isAssetKey(key)) {
+    if (!isUploadableKey(key)) {
       setEditStatus("当前字段不支持上传", true);
       return;
     }
@@ -455,7 +510,14 @@
     }
     const fileInput = document.createElement("input");
     fileInput.type = "file";
-    fileInput.accept = "image/*,video/*";
+    if (isAssetKey(key)) {
+      fileInput.accept = "image/*,video/*";
+    } else if (isFileKey(key)) {
+      const exts = getCollectionExtensions(context.collection.id);
+      fileInput.accept = exts && exts.length ? exts.join(",") : "*/*";
+    } else {
+      fileInput.accept = "*/*";
+    }
     fileInput.addEventListener("change", () => {
       if (fileInput.files && fileInput.files[0]) {
         uploadFileForRow(row, fileInput.files[0], key, context);
@@ -578,6 +640,7 @@
       setEditStatus("请先选择一个游戏", true);
       return;
     }
+    removedFields = [];
     populateEditFields(context.game);
     setEditStatus("");
     editModal.classList.remove("hidden");
@@ -587,6 +650,7 @@
     if (editModal) {
       editModal.classList.add("hidden");
     }
+    removedFields = [];
   }
 
   function populateEditFields(game) {
@@ -676,6 +740,7 @@
       removeBtn.className = "remove-field";
       removeBtn.textContent = "删除";
       removeBtn.addEventListener("click", () => {
+        recordRemovedField(row);
         row.remove();
       });
     }
@@ -764,6 +829,7 @@
           metadata_path: context.metadata_path,
           x_index_id: context.x_index_id,
           fields: fieldsPayload,
+          removed_fields: removedFields,
         }),
       });
       if (!res.ok) {
@@ -782,6 +848,7 @@
       renderGames();
       renderFields();
       renderMedia();
+      removedFields = [];
       setEditStatus("保存成功");
       setTimeout(() => closeEditModal(), 600);
     } catch (err) {

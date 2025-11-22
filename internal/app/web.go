@@ -46,6 +46,7 @@ type collectionPayload struct {
 	DisplayName  string         `json:"display_name"`
 	MetadataPath string         `json:"metadata_path"`
 	RelativePath string         `json:"relative_path"`
+	Extensions   []string       `json:"extensions,omitempty"`
 	Games        []*gamePayload `json:"games"`
 }
 
@@ -79,6 +80,7 @@ type updateGameRequest struct {
 	MetadataPath string          `json:"metadata_path"`
 	XIndexID     int             `json:"x_index_id"`
 	Fields       []*fieldPayload `json:"fields"`
+	Removed      []*fieldPayload `json:"removed_fields"`
 }
 
 type gameUpdateResponse struct {
@@ -254,7 +256,7 @@ func (c *WebCommand) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "x_index_id must be positive", http.StatusBadRequest)
 		return
 	}
-	if err := c.updateGameMetadata(metadataPath, req.XIndexID, req.Fields); err != nil {
+	if err := c.updateGameMetadata(metadataPath, req.XIndexID, req.Fields, req.Removed); err != nil {
 		http.Error(w, fmt.Sprintf("update game failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -604,6 +606,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				DisplayName:  fmt.Sprintf("%s(%s)", name, dirName),
 				MetadataPath: metadataPath,
 				RelativePath: relDir,
+				Extensions:   parseCollectionExtensions(blk),
 			}
 			result = append(result, current)
 		case metadata.KindGame:
@@ -697,7 +700,74 @@ func appendFallbackAssetFields(fields []*fieldPayload, fallback map[string]fallb
 	return fields
 }
 
-func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload) error {
+func allowedExtensionsForGame(doc *metadata.Document, gameBlock *metadata.Block) []string {
+	if doc == nil || gameBlock == nil {
+		return nil
+	}
+	var current *metadata.Block
+	for _, blk := range doc.Blocks {
+		if blk == nil {
+			continue
+		}
+		if blk.Kind == metadata.KindCollection {
+			current = blk
+		}
+		if blk == gameBlock {
+			if current == nil {
+				return nil
+			}
+			return parseCollectionExtensions(current)
+		}
+	}
+	return nil
+}
+
+func parseCollectionExtensions(blk *metadata.Block) []string {
+	if blk == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var result []string
+	for _, entry := range blk.Entries {
+		if entry == nil {
+			continue
+		}
+		switch entry.Key {
+		case "extensions", "extension":
+			for _, value := range entry.Values {
+				for _, part := range strings.Split(value, ",") {
+					normalized := normalizeExtension(part)
+					if normalized == "" {
+						continue
+					}
+					if _, exists := seen[normalized]; exists {
+						continue
+					}
+					seen[normalized] = struct{}{}
+					result = append(result, normalized)
+				}
+			}
+		}
+	}
+	return result
+}
+
+func normalizeExtension(value string) string {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimPrefix(trimmed, ".")
+	return strings.ToLower(trimmed)
+}
+
+func containsExtension(list []string, ext string) bool {
+	for _, item := range list {
+		if item == ext {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload, removed []*fieldPayload) error {
 	doc, err := metadata.ParseMetadataFile(metadataPath)
 	if err != nil {
 		return err
@@ -706,8 +776,11 @@ func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, field
 	if err != nil {
 		return err
 	}
-	fields, err = c.materializeStagedFields(metadataPath, block, fields)
+	fields, err = c.materializeStagedFields(metadataPath, doc, block, fields)
 	if err != nil {
+		return err
+	}
+	if err := c.handleRemovedFields(metadataPath, doc, block, removed); err != nil {
 		return err
 	}
 	order, updates, err := combineFieldValues(fields)
@@ -818,7 +891,7 @@ func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map
 	return entries, nil
 }
 
-func (c *WebCommand) materializeStagedFields(metadataPath string, block *metadata.Block, fields []*fieldPayload) ([]*fieldPayload, error) {
+func (c *WebCommand) materializeStagedFields(metadataPath string, doc *metadata.Document, block *metadata.Block, fields []*fieldPayload) ([]*fieldPayload, error) {
 	if c == nil || c.uploadDir == "" {
 		return fields, nil
 	}
@@ -826,11 +899,12 @@ func (c *WebCommand) materializeStagedFields(metadataPath string, block *metadat
 		if field == nil {
 			continue
 		}
+		key := strings.ToLower(strings.TrimSpace(field.Key))
 		for idx, value := range field.Values {
 			if !strings.HasPrefix(value, stagedUploadPrefix) {
 				continue
 			}
-			rel, err := c.moveStagedFileToMedia(metadataPath, block, value)
+			rel, err := c.finalizeStagedFile(metadataPath, doc, block, key, value)
 			if err != nil {
 				return nil, err
 			}
@@ -840,7 +914,54 @@ func (c *WebCommand) materializeStagedFields(metadataPath string, block *metadat
 	return fields, nil
 }
 
-func (c *WebCommand) moveStagedFileToMedia(metadataPath string, block *metadata.Block, token string) (string, error) {
+func (c *WebCommand) handleRemovedFields(metadataPath string, doc *metadata.Document, block *metadata.Block, removed []*fieldPayload) error {
+	if len(removed) == 0 {
+		return nil
+	}
+	for _, field := range removed {
+		if field == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(field.Key))
+		if key == "" {
+			continue
+		}
+		for _, value := range field.Values {
+			if strings.HasPrefix(value, stagedUploadPrefix) && c.uploadDir != "" {
+				stagedName := strings.TrimPrefix(value, stagedUploadPrefix)
+				if stagedName != "" {
+					_ = os.Remove(filepath.Join(c.uploadDir, filepath.FromSlash(stagedName)))
+				}
+				continue
+			}
+			c.deleteFieldFile(metadataPath, doc, block, key, value)
+		}
+	}
+	return nil
+}
+
+func (c *WebCommand) deleteFieldFile(metadataPath string, doc *metadata.Document, block *metadata.Block, key, value string) {
+	metadataDir := filepath.Dir(metadataPath)
+	target := filepath.Join(metadataDir, filepath.FromSlash(value))
+	target = filepath.Clean(target)
+	if !strings.HasPrefix(target, metadataDir+string(os.PathSeparator)) {
+		return
+	}
+	switch {
+	case strings.HasPrefix(key, "assets."):
+		mediaDir := filepath.Join(metadataDir, "media") + string(os.PathSeparator)
+		if strings.HasPrefix(target, mediaDir) {
+			_ = os.Remove(target)
+		}
+	case key == "file" || key == "files":
+		allowed := allowedExtensionsForGame(doc, block)
+		if len(allowed) == 0 || containsExtension(allowed, normalizeExtension(filepath.Ext(target))) {
+			_ = os.Remove(target)
+		}
+	}
+}
+
+func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Document, block *metadata.Block, key, token string) (string, error) {
 	if c.uploadDir == "" {
 		return "", errors.New("upload directory not initialized")
 	}
@@ -852,7 +973,15 @@ func (c *WebCommand) moveStagedFileToMedia(metadataPath string, block *metadata.
 	if _, err := os.Stat(source); err != nil {
 		return "", err
 	}
-	return moveFileToMedia(metadataPath, block, source, stagedName)
+	switch {
+	case strings.HasPrefix(key, "assets."):
+		return moveFileToMedia(metadataPath, block, source, stagedName)
+	case key == "file" || key == "files":
+		allowed := allowedExtensionsForGame(doc, block)
+		return moveFileToRom(metadataPath, source, stagedName, allowed)
+	default:
+		return "", fmt.Errorf("field %s does not support uploads", key)
+	}
 }
 
 func normalizeFieldValues(values []string) []string {
@@ -878,7 +1007,16 @@ func moveFileToMedia(metadataPath string, block *metadata.Block, sourcePath, sta
 	if romBase != "" {
 		mediaDir = filepath.Join(mediaDir, romBase)
 	}
-	if err := os.MkdirAll(mediaDir, 0o755); err != nil {
+	return moveFileToDir(metadataDir, mediaDir, sourcePath, stagedName, nil)
+}
+
+func moveFileToRom(metadataPath string, sourcePath, stagedName string, allowedExt []string) (string, error) {
+	metadataDir := filepath.Dir(metadataPath)
+	return moveFileToDir(metadataDir, metadataDir, sourcePath, stagedName, allowedExt)
+}
+
+func moveFileToDir(metadataDir, targetDir, sourcePath, stagedName string, allowedExt []string) (string, error) {
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return "", err
 	}
 	baseName := stagedName
@@ -888,7 +1026,13 @@ func moveFileToMedia(metadataPath string, block *metadata.Block, sourcePath, sta
 	if baseName == "" {
 		baseName = filepath.Base(sourcePath)
 	}
-	destPath := filepath.Join(mediaDir, baseName)
+	if len(allowedExt) > 0 {
+		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(baseName)), ".")
+		if ext == "" || !containsExtension(allowedExt, ext) {
+			return "", fmt.Errorf("file extension %s not allowed", ext)
+		}
+	}
+	destPath := filepath.Join(targetDir, baseName)
 	if err := os.Rename(sourcePath, destPath); err != nil {
 		if err := copyFileContents(sourcePath, destPath); err != nil {
 			return "", err
