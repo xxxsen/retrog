@@ -1,16 +1,8 @@
 package app
 
 import (
-	"regexp"
 	"strings"
 	"unicode"
-)
-
-var (
-	whitespaceCollapseRegex = regexp.MustCompile(`\s+`)
-	repeatPunctRegex        = regexp.MustCompile(`([[:punct:]])([[:punct:]])+`)
-	nonNameCharRegex        = regexp.MustCompile(`[^\p{L}\p{N}-]+`)
-	hyphenCollapseRegex     = regexp.MustCompile(`-+`)
 )
 
 func hasGameNamePrefix(name string) bool {
