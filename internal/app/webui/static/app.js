@@ -152,7 +152,7 @@
       item.className = "list-item list-item-multiline";
       const nameLine = document.createElement("div");
       nameLine.className = "collection-name-line";
-      nameLine.textContent = collection.display_name || collection.name;
+      nameLine.textContent = collection.name || collection.display_name || "";
       const pathLine = document.createElement("div");
       pathLine.className = "collection-path-line";
       pathLine.textContent = collection.relative_path || collection.dir_name || "";
@@ -267,7 +267,7 @@
       const prefix = buildMediaPrefix(game);
       const nameLine = document.createElement("div");
       nameLine.className = "game-name-line";
-      nameLine.textContent = buildNameLine(prefix, game.display_name || game.title);
+      nameLine.textContent = buildNameLine(prefix, buildNameText(game));
       const pathLine = document.createElement("div");
       pathLine.className = "game-path-line";
       pathLine.textContent = normalizeRomPath(game.rom_path);
@@ -318,7 +318,7 @@
       const prefix = buildMediaPrefix(game);
       const nameLine = document.createElement("div");
       nameLine.className = "game-name-line";
-      nameLine.textContent = buildNameLine(prefix, game.display_name || game.title);
+      nameLine.textContent = buildNameLine(prefix, buildNameText(game));
       const pathLine = document.createElement("div");
       pathLine.className = "game-path-line";
       pathLine.textContent = normalizeRomPath(game.rom_path);
@@ -354,7 +354,15 @@
 
   function buildNameLine(prefix, nameText) {
     const name = nameText || "";
-    return prefix + name.replace(/\s*\(.+\)\s*$/, "");
+    return prefix + name;
+  }
+
+  function buildNameText(game) {
+    if (!game) {
+      return "";
+    }
+    const text = game.display_name || game.title || "";
+    return text.replace(/\s*\(.+\)\s*$/, "");
   }
 
   function findMatchingGames(query) {

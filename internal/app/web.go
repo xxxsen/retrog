@@ -46,6 +46,7 @@ type collectionPayload struct {
 	DisplayName  string         `json:"display_name"`
 	MetadataPath string         `json:"metadata_path"`
 	RelativePath string         `json:"relative_path"`
+	SortKey      string         `json:"sort_key"`
 	Extensions   []string       `json:"extensions,omitempty"`
 	Games        []*gamePayload `json:"games"`
 }
@@ -522,7 +523,7 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 		return nil, err
 	}
 	sort.Slice(result, func(i, j int) bool {
-		return strings.Compare(result[i].DisplayName, result[j].DisplayName) < 0
+		return compareCollectionSortKey(result[i], result[j])
 	})
 	for _, coll := range result {
 		coll.ID = buildCollectionID(coll.MetadataPath, coll.Index)
@@ -664,6 +665,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				DisplayName:  fmt.Sprintf("%s(%s)", name, dirName),
 				MetadataPath: metadataPath,
 				RelativePath: relDir,
+				SortKey:      strings.TrimSpace(typed.SortBy),
 				Extensions:   parseCollectionExtensions(blk),
 			}
 			result = append(result, current)
@@ -844,6 +846,25 @@ func containsExtension(list []string, ext string) bool {
 		}
 	}
 	return false
+}
+
+func compareCollectionSortKey(a, b *collectionPayload) bool {
+	keyA := normalizeCollectionSortKey(a)
+	keyB := normalizeCollectionSortKey(b)
+	if keyA == keyB {
+		return strings.Compare(a.DisplayName, b.DisplayName) < 0
+	}
+	return keyA < keyB
+}
+
+func normalizeCollectionSortKey(coll *collectionPayload) string {
+	if coll == nil {
+		return ""
+	}
+	if strings.TrimSpace(coll.SortKey) != "" {
+		return strings.ToLower(coll.SortKey)
+	}
+	return strings.ToLower(coll.Name)
 }
 
 func compareGameSortKey(a, b *gamePayload) bool {
