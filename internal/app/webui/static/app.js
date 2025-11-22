@@ -624,7 +624,19 @@
       return;
     }
     fieldEmpty.style.display = "none";
-    game.fields.forEach((field) => {
+    const orderedFields = [...game.fields];
+    orderedFields.sort((a, b) => {
+      const aKey = (a?.key || "").toLowerCase();
+      const bKey = (b?.key || "").toLowerCase();
+      if (aKey === INDEX_FIELD_KEY) {
+        return -1;
+      }
+      if (bKey === INDEX_FIELD_KEY) {
+        return 1;
+      }
+      return 0;
+    });
+    orderedFields.forEach((field) => {
       const row = document.createElement("div");
       row.className = "field-row";
       const key = document.createElement("div");
