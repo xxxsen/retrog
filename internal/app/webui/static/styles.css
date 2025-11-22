@@ -156,7 +156,12 @@ section {
   flex: 1;
 }
 
-.panel-header.with-action button {
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.panel-actions button {
   flex: 0 0 auto;
 }
 
@@ -172,6 +177,13 @@ section {
 .ghost:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.ghost.danger {
+  border-color: #f87171;
+  color: #f87171;
+}
+.ghost.danger:hover {
+  background: rgba(248, 113, 113, 0.1);
 }
 
 .panel-subtitle {
@@ -414,6 +426,9 @@ section {
   color: var(--text-muted);
   cursor: not-allowed;
 }
+.edit-field-value.description {
+  min-height: 120px;
+}
 
 .edit-field-row .remove-field {
   flex: 0 0 auto;
@@ -518,4 +533,37 @@ section {
     width: 100%;
     min-width: auto;
   }
+}
+.delete-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.delete-form .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.delete-actions button {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b121d;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.delete-actions .danger {
+  border-color: #f87171;
+  background: #f87171;
+  color: #fff;
 }

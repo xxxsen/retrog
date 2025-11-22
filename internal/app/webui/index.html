@@ -41,7 +41,10 @@
               <h2>元信息</h2>
               <p class="panel-subtitle">展示 metadata 中的所有字段</p>
             </div>
-            <button type="button" id="edit-game" class="ghost">编辑</button>
+            <div class="panel-actions">
+              <button type="button" id="edit-game" class="ghost">编辑</button>
+              <button type="button" id="delete-game" class="ghost danger">删除</button>
+            </div>
           </div>
           <div id="field-list" class="fields"></div>
           <div id="field-empty" class="empty-state">请选择游戏查看字段</div>
@@ -76,6 +79,26 @@
         </div>
       </form>
       <div id="edit-status" class="edit-status"></div>
+    </div>
+  </div>
+  <div id="delete-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>删除游戏</h3>
+        <button type="button" id="delete-close">×</button>
+      </div>
+      <form id="delete-form" class="delete-form">
+        <p>确定删除该游戏的元信息？</p>
+        <label class="checkbox">
+          <input type="checkbox" id="delete-remove-files" />
+          <span>同时删除 ROM/媒体文件</span>
+        </label>
+        <div class="delete-actions">
+          <button type="button" id="delete-cancel">取消</button>
+          <button type="submit" class="danger">删除</button>
+        </div>
+      </form>
+      <div id="delete-status" class="edit-status"></div>
     </div>
   </div>
   <script src="/static/app.js"></script>

@@ -99,6 +99,16 @@ type fallbackAssetField struct {
 	Path string
 }
 
+type deleteGameRequest struct {
+	MetadataPath string `json:"metadata_path"`
+	XIndexID     int    `json:"x_index_id"`
+	RemoveFiles  bool   `json:"remove_files"`
+}
+
+type deleteGameResponse struct {
+	Collection *collectionPayload `json:"collection"`
+}
+
 type assetStore struct {
 	root  string
 	extra []string
@@ -170,6 +180,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/assets/", c.handleAsset)
 	mux.HandleFunc("/api/games/update", c.handleUpdateGame)
 	mux.HandleFunc("/api/games/upload", c.handleUploadMedia)
+	mux.HandleFunc("/api/games/delete", c.handleDeleteGame)
 
 	srv := &http.Server{
 		Addr:    c.bind,
@@ -325,6 +336,38 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func (c *WebCommand) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req deleteGameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+	metadataPath, err := c.resolveMetadataPath(req.MetadataPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.XIndexID <= 0 {
+		http.Error(w, "x_index_id must be positive", http.StatusBadRequest)
+		return
+	}
+	if err := c.deleteGame(metadataPath, req.XIndexID, req.RemoveFiles); err != nil {
+		http.Error(w, fmt.Sprintf("delete game failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := c.reloadCollections(r.Context()); err != nil {
+		http.Error(w, fmt.Sprintf("reload collections failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	coll := c.findCollectionByPath(filepath.ToSlash(metadataPath))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(&deleteGameResponse{Collection: coll})
+}
+
 func (c *WebCommand) stageMediaUpload(filename string, source multipart.File) (string, string, error) {
 	if c.uploadDir == "" {
 		return "", "", errors.New("upload directory not initialized")
@@ -401,6 +444,18 @@ func (c *WebCommand) findGamePayload(metadataPath string, xIndexID int) (*collec
 		}
 	}
 	return nil, nil
+}
+
+func (c *WebCommand) findCollectionByPath(metadataPath string) *collectionPayload {
+	metadataPath = filepath.ToSlash(metadataPath)
+	c.dataMu.RLock()
+	defer c.dataMu.RUnlock()
+	for _, coll := range c.collections {
+		if coll != nil && filepath.ToSlash(coll.MetadataPath) == metadataPath {
+			return coll
+		}
+	}
+	return nil
 }
 
 func (c *WebCommand) resolveMetadataPath(meta string) (string, error) {
@@ -772,7 +827,7 @@ func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, field
 	if err != nil {
 		return err
 	}
-	block, err := findGameBlockByIndexID(doc, xIndexID)
+	block, _, err := findGameBlockByIndexID(doc, xIndexID)
 	if err != nil {
 		return err
 	}
@@ -795,19 +850,35 @@ func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, field
 	return metadata.WriteMetadataFile(metadataPath, doc)
 }
 
-func findGameBlockByIndexID(doc *metadata.Document, xIndexID int) (*metadata.Block, error) {
-	if doc == nil {
-		return nil, errors.New("metadata document is empty")
+func (c *WebCommand) deleteGame(metadataPath string, xIndexID int, removeFiles bool) error {
+	doc, err := metadata.ParseMetadataFile(metadataPath)
+	if err != nil {
+		return err
 	}
-	for _, blk := range doc.Blocks {
+	block, idx, err := findGameBlockByIndexID(doc, xIndexID)
+	if err != nil {
+		return err
+	}
+	if removeFiles {
+		c.removeGameFiles(metadataPath, doc, block)
+	}
+	doc.Blocks = append(doc.Blocks[:idx], doc.Blocks[idx+1:]...)
+	return metadata.WriteMetadataFile(metadataPath, doc)
+}
+
+func findGameBlockByIndexID(doc *metadata.Document, xIndexID int) (*metadata.Block, int, error) {
+	if doc == nil {
+		return nil, -1, errors.New("metadata document is empty")
+	}
+	for idx, blk := range doc.Blocks {
 		if blk == nil || blk.Kind != metadata.KindGame {
 			continue
 		}
 		if blockXIndexID(blk) == xIndexID {
-			return blk, nil
+			return blk, idx, nil
 		}
 	}
-	return nil, fmt.Errorf("game with x-index-id %d not found", xIndexID)
+	return nil, -1, fmt.Errorf("game with x-index-id %d not found", xIndexID)
 }
 
 func combineFieldValues(fields []*fieldPayload) ([]string, map[string][]string, error) {
@@ -938,6 +1009,28 @@ func (c *WebCommand) handleRemovedFields(metadataPath string, doc *metadata.Docu
 		}
 	}
 	return nil
+}
+
+func (c *WebCommand) removeGameFiles(metadataPath string, doc *metadata.Document, block *metadata.Block) {
+	if block == nil {
+		return
+	}
+	for _, entry := range block.Entries {
+		if entry == nil {
+			continue
+		}
+		key := strings.ToLower(entry.Key)
+		switch {
+		case key == "file" || key == "files":
+			for _, value := range entry.Values {
+				c.deleteFieldFile(metadataPath, doc, block, key, value)
+			}
+		case strings.HasPrefix(key, "assets."):
+			for _, value := range entry.Values {
+				c.deleteFieldFile(metadataPath, doc, block, key, value)
+			}
+		}
+	}
 }
 
 func (c *WebCommand) deleteFieldFile(metadataPath string, doc *metadata.Document, block *metadata.Block, key, value string) {

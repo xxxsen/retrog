@@ -12,6 +12,13 @@
   const searchCollection = document.getElementById("search-collection");
   const searchClear = document.getElementById("search-clear");
   const editButton = document.getElementById("edit-game");
+  const deleteButton = document.getElementById("delete-game");
+  const deleteModal = document.getElementById("delete-modal");
+  const deleteForm = document.getElementById("delete-form");
+  const deleteClose = document.getElementById("delete-close");
+  const deleteCancel = document.getElementById("delete-cancel");
+  let deleteStatus = document.getElementById("delete-status");
+  const deleteRemoveFiles = document.getElementById("delete-remove-files");
   const editModal = document.getElementById("edit-modal");
   const editForm = document.getElementById("edit-form");
   const editFields = document.getElementById("edit-fields");
@@ -653,18 +660,43 @@
     removedFields = [];
   }
 
+  function openDeleteModal() {
+    if (deleteModal) {
+      deleteModal.classList.remove("hidden");
+      setDeleteStatus("");
+      if (deleteRemoveFiles) {
+        deleteRemoveFiles.checked = false;
+      }
+    }
+  }
+
+  function closeDeleteModal() {
+    if (deleteModal) {
+      deleteModal.classList.add("hidden");
+    }
+    setDeleteStatus("");
+  }
+
   function populateEditFields(game) {
     editFields.innerHTML = "";
-    const multipleFileValues =
-      Array.isArray(game?.fields) &&
-      game.fields
-        .filter((field) => {
-          const lower = (field.key || "").toLowerCase();
-          return lower === "file" || lower === "files";
-        })
-        .some((field) => field.values && field.values.length > 1);
+    const fileField = findFieldByKey(game?.fields, "file") || findFieldByKey(game?.fields, "files");
+    const multipleFileValues = fileField && fileField.values && fileField.values.length > 1;
     const fallback = { key: "game", values: [game && game.title ? game.title : ""] };
     const fields = game && Array.isArray(game.fields) && game.fields.length ? game.fields : [fallback];
+    fields.sort((a, b) => {
+      if (!a || !b) {
+        return 0;
+      }
+      const aKey = (a.key || "").toLowerCase();
+      const bKey = (b.key || "").toLowerCase();
+      if (aKey === INDEX_FIELD_KEY) {
+        return -1;
+      }
+      if (bKey === INDEX_FIELD_KEY) {
+        return 1;
+      }
+      return 0;
+    });
     fields.forEach((field) => {
       const keyLower = (field.key || "").toLowerCase();
       const isIndexField = keyLower === INDEX_FIELD_KEY;
@@ -681,6 +713,17 @@
     });
   }
 
+  function findFieldByKey(fields, key) {
+    if (!Array.isArray(fields)) {
+      return null;
+    }
+    const lower = key.toLowerCase();
+    return (
+      fields.find((field) => (field.key || "").toLowerCase() === lower) ||
+      null
+    );
+  }
+
   function createEditableFieldRow(field = { key: "", values: [] }, options = {}) {
     const row = document.createElement("div");
     row.className = "edit-field-row";
@@ -693,6 +736,7 @@
     );
     const locked = Boolean(options.locked);
     const allowRemove = options.allowRemove !== false && !locked;
+    const keyLower = (field.key || "").toLowerCase();
 
     let keyElement;
     if (options.isNew) {
@@ -727,6 +771,9 @@
     valueArea.className = "edit-field-value";
     valueArea.placeholder = "多个值使用换行分隔";
     valueArea.value = (field.values || []).join("\n");
+    if (keyLower === "description") {
+      valueArea.classList.add("description");
+    }
     if (locked) {
       valueArea.readOnly = true;
       valueArea.classList.add("readonly");
@@ -818,6 +865,14 @@
     editStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
   }
 
+  function setDeleteStatus(message, isError = false) {
+    if (!deleteStatus) {
+      return;
+    }
+    deleteStatus.textContent = message;
+    deleteStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
+  }
+
   async function handleEditSubmit(event) {
     event.preventDefault();
     const context = getCurrentSelectionContext();
@@ -900,6 +955,74 @@
 
   if (editButton) {
     editButton.addEventListener("click", openEditModal);
+  }
+  if (deleteButton) {
+    deleteButton.addEventListener("click", () => {
+      const context = getCurrentSelectionContext();
+      if (!context) {
+        setDeleteStatus("请选择需要删除的游戏", true);
+        return;
+      }
+      openDeleteModal();
+    });
+  }
+
+  if (deleteClose) {
+    deleteClose.addEventListener("click", closeDeleteModal);
+  }
+  if (deleteCancel) {
+    deleteCancel.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeDeleteModal();
+    });
+  }
+  if (deleteForm) {
+    deleteForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const context = getCurrentSelectionContext();
+      if (!context) {
+        setDeleteStatus("请选择需要删除的游戏", true);
+        return;
+      }
+      setDeleteStatus("删除中...");
+      try {
+        const res = await fetch("/api/games/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            metadata_path: context.metadata_path,
+            x_index_id: context.x_index_id,
+            remove_files: deleteRemoveFiles ? deleteRemoveFiles.checked : false,
+          }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || "删除失败");
+        }
+        const data = await res.json();
+        removedFields = [];
+        closeEditModal();
+        closeDeleteModal();
+        applyCollectionUpdate(data.collection);
+        const updatedCollection =
+          data.collection && data.collection.id
+            ? collections.find((c) => c.id === data.collection.id)
+            : null;
+        if (updatedCollection && updatedCollection.games.length) {
+          currentCollectionId = updatedCollection.id;
+          currentGameId = updatedCollection.games[0].id;
+        } else {
+          currentGameId = null;
+        }
+        renderCollections();
+        renderGames();
+        renderFields();
+        renderMedia();
+        setDeleteStatus("删除成功");
+      } catch (err) {
+        setDeleteStatus(err.message, true);
+      }
+    });
   }
   if (editAddField) {
     editAddField.addEventListener("click", () => {
