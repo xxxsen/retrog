@@ -846,9 +846,17 @@ func deriveRomBase(files []string) string {
 }
 
 func collectGameAssets(metadataDir string, game metadata.Game, romBase string, store *assetStore, logger *zap.Logger) []*assetPayload {
-	resolved := make(map[string]string)
+	type assetCandidate struct {
+		name string
+		path string
+	}
+	resolved := make(map[string]assetCandidate)
 	for name, assetPath := range game.Assets {
-		resolved[name] = resolveAssetPath(metadataDir, assetPath)
+		norm := normalizeAssetKey(name)
+		if norm == "" {
+			continue
+		}
+		resolved[norm] = assetCandidate{name: name, path: resolveAssetPath(metadataDir, assetPath)}
 	}
 	if romBase != "" {
 		mediaDir := filepath.Join(metadataDir, "media", romBase)
@@ -863,39 +871,57 @@ func collectGameAssets(metadataDir string, game metadata.Game, romBase string, s
 				if cleanKey == "" {
 					cleanKey = key
 				}
-				if _, exists := resolved[cleanKey]; exists {
+				norm := normalizeAssetKey(cleanKey)
+				if norm == "" {
 					continue
 				}
-				resolved[cleanKey] = filepath.Join(mediaDir, key)
+				if _, exists := resolved[norm]; exists {
+					continue
+				}
+				resolved[norm] = assetCandidate{name: cleanKey, path: filepath.Join(mediaDir, key)}
 			}
 		}
 	}
 
 	names := make([]string, 0, len(resolved))
-	for name := range resolved {
-		names = append(names, name)
+	for _, candidate := range resolved {
+		names = append(names, candidate.name)
 	}
-	sort.Strings(names)
+	sort.Slice(names, func(i, j int) bool {
+		return strings.ToLower(names[i]) < strings.ToLower(names[j])
+	})
 
 	var out []*assetPayload
 	for _, name := range names {
-		path := resolved[name]
-		if path == "" {
+		norm := normalizeAssetKey(name)
+		candidate, ok := resolved[norm]
+		if !ok {
 			continue
 		}
-		id, err := store.Register(path)
+		if candidate.path == "" {
+			continue
+		}
+		id, err := store.Register(candidate.path)
 		if err != nil {
-			logger.Warn("skip asset", zap.String("game", game.Title), zap.String("asset", name), zap.String("path", path), zap.Error(err))
+			logger.Warn("skip asset", zap.String("game", game.Title), zap.String("asset", candidate.name), zap.String("path", candidate.path), zap.Error(err))
 			continue
 		}
 		out = append(out, &assetPayload{
-			Name:     name,
-			Type:     detectAssetType(path),
+			Name:     candidate.name,
+			Type:     detectAssetType(candidate.path),
 			URL:      "/api/assets/" + id,
-			FileName: filepath.Base(path),
+			FileName: filepath.Base(candidate.path),
 		})
 	}
 	return out
+}
+
+func normalizeAssetKey(key string) string {
+	trimmed := strings.TrimSpace(key)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.ToLower(trimmed)
 }
 
 func resolveAssetPath(baseDir, value string) string {
