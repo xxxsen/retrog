@@ -88,6 +88,12 @@ type updateGameRequest struct {
 	Removed      []*fieldPayload `json:"removed_fields"`
 }
 
+type createGameRequest struct {
+	MetadataPath string          `json:"metadata_path"`
+	XIndexID     int             `json:"x_index_id"`
+	Fields       []*fieldPayload `json:"fields"`
+}
+
 type gameUpdateResponse struct {
 	Collection *collectionPayload `json:"collection"`
 	Game       *gamePayload       `json:"game"`
@@ -185,6 +191,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/assets/", c.handleAsset)
 	mux.HandleFunc("/api/games/update", c.handleUpdateGame)
 	mux.HandleFunc("/api/games/upload", c.handleUploadMedia)
+	mux.HandleFunc("/api/games/create", c.handleCreateGame)
 	mux.HandleFunc("/api/games/delete", c.handleDeleteGame)
 
 	srv := &http.Server{
@@ -283,6 +290,39 @@ func (c *WebCommand) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 	coll, game := c.findGamePayload(filepath.ToSlash(metadataPath), req.XIndexID)
 	if coll == nil || game == nil {
 		http.Error(w, "updated game not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(&gameUpdateResponse{Collection: coll, Game: game})
+}
+
+func (c *WebCommand) handleCreateGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req createGameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+	metadataPath, err := c.resolveMetadataPath(req.MetadataPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	xIndexID, err := c.createGame(metadataPath, req.XIndexID, req.Fields)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("create game failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := c.reloadCollections(r.Context()); err != nil {
+		http.Error(w, fmt.Sprintf("reload collections failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	coll, game := c.findGamePayload(filepath.ToSlash(metadataPath), xIndexID)
+	if coll == nil || game == nil {
+		http.Error(w, "created game not found", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -920,12 +960,69 @@ func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, field
 	if err != nil {
 		return err
 	}
+	if err := validateRequiredGameFields(updates); err != nil {
+		return err
+	}
 	entries, err := rebuildBlockEntries(block.Entries, order, updates)
 	if err != nil {
 		return err
 	}
 	block.Entries = entries
 	return metadata.WriteMetadataFile(metadataPath, doc)
+}
+
+func (c *WebCommand) createGame(metadataPath string, xIndexID int, fields []*fieldPayload) (int, error) {
+	doc, err := metadata.ParseMetadataFile(metadataPath)
+	if err != nil {
+		return 0, err
+	}
+	if _, _, err := findGameBlockByIndexID(doc, xIndexID); err == nil {
+		return 0, fmt.Errorf("x-index-id %d already exists", xIndexID)
+	}
+	if xIndexID <= 0 {
+		xIndexID = nextGameIndexID(doc)
+	}
+	blk := &metadata.Block{Kind: metadata.KindGame}
+	doc.Blocks = append(doc.Blocks, blk)
+	setBlockXIndexID(blk, xIndexID)
+	fields, err = c.materializeStagedFields(metadataPath, doc, blk, fields)
+	if err != nil {
+		return 0, err
+	}
+	order, updates, err := combineFieldValues(fields)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateRequiredGameFields(updates); err != nil {
+		return 0, err
+	}
+	entries, err := rebuildBlockEntries(blk.Entries, order, updates)
+	if err != nil {
+		return 0, err
+	}
+	blk.Entries = entries
+	if err := metadata.WriteMetadataFile(metadataPath, doc); err != nil {
+		return 0, err
+	}
+	return xIndexID, nil
+}
+
+func nextGameIndexID(doc *metadata.Document) int {
+	maxID := 0
+	if doc == nil {
+		return 1
+	}
+	for _, blk := range doc.Blocks {
+		if blk == nil || blk.Kind != metadata.KindGame {
+			continue
+		}
+		if entry := blk.Entry(gameIndexEntryKey); entry != nil {
+			if id, ok := parseXIndexEntry(entry); ok && id > maxID {
+				maxID = id
+			}
+		}
+	}
+	return maxID + 1
 }
 
 func (c *WebCommand) deleteGame(metadataPath string, xIndexID int, removeFiles bool) error {
@@ -1038,6 +1135,33 @@ func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map
 		entries[0], entries[gameIdx] = entries[gameIdx], entries[0]
 	}
 	return entries, nil
+}
+
+func validateRequiredGameFields(fields map[string][]string) error {
+	if len(trimAndFilter(fields["game"])) == 0 {
+		return errors.New("game field is required")
+	}
+	fileValues := trimAndFilter(fields["file"])
+	if len(fileValues) == 0 {
+		fileValues = trimAndFilter(fields["files"])
+	}
+	if len(fileValues) == 0 {
+		return errors.New("file field is required")
+	}
+	if len(trimAndFilter(fields["assets.boxfront"])) == 0 {
+		return errors.New("assets.boxFront field is required")
+	}
+	return nil
+}
+
+func trimAndFilter(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func (c *WebCommand) materializeStagedFields(metadataPath string, doc *metadata.Document, block *metadata.Block, fields []*fieldPayload) ([]*fieldPayload, error) {

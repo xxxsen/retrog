@@ -28,9 +28,14 @@
       </form>
       <div class="panels">
         <section class="games-panel">
-          <div class="panel-header">
-            <h2>游戏</h2>
-            <p class="panel-subtitle">name (rom 路径)</p>
+          <div class="panel-header with-action">
+            <div>
+              <h2>游戏</h2>
+              <p class="panel-subtitle">name (rom 路径)</p>
+            </div>
+            <div class="panel-actions">
+              <button type="button" id="add-game" class="ghost">新增</button>
+            </div>
           </div>
           <ul id="game-list" class="list"></ul>
           <div id="game-empty" class="empty-state">请选择左侧的合集</div>

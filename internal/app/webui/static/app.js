@@ -11,6 +11,7 @@
   const searchInput = document.getElementById("search-input");
   const searchCollection = document.getElementById("search-collection");
   const searchClear = document.getElementById("search-clear");
+  const addGameButton = document.getElementById("add-game");
   const editButton = document.getElementById("edit-game");
   const deleteButton = document.getElementById("delete-game");
   const deleteModal = document.getElementById("delete-modal");
@@ -65,6 +66,7 @@
   ];
   const rowState = new WeakMap();
   let removedFields = [];
+  let editContext = null;
   const collectionExtensions = new Map();
 
   let collections = [];
@@ -114,6 +116,30 @@
     return collectionExtensions.get(collectionId) || [];
   }
 
+  function getNextXIndex(collection) {
+    if (!collection || !Array.isArray(collection.games) || !collection.games.length) {
+      return 1;
+    }
+    const maxId = Math.max(
+      ...collection.games.map((game) => Number(game.x_index_id) || 0),
+    );
+    return maxId + 1;
+  }
+
+  function buildDefaultFieldsForNewGame(collection, xIndexId) {
+    const baseName = collection?.dir_name || "";
+    return [
+      { key: "x-index-id", values: [String(xIndexId)] },
+      { key: "x-id", values: [baseName] },
+      { key: "game", values: [""] },
+      { key: "file", values: [""] },
+      { key: "developer", values: ["none"] },
+      { key: "publisher", values: ["none"] },
+      { key: "assets.boxfront", values: [""] },
+      { key: "assets.video", values: [""] },
+    ];
+  }
+
   function populateCollectionFilterOptions() {
     if (!searchCollection) {
       return;
@@ -138,6 +164,7 @@
   }
 
   function renderCollections() {
+    collections.sort(compareCollections);
     collectionList.innerHTML = "";
     if (!collections.length) {
       collectionEmpty.style.display = "block";
@@ -184,6 +211,22 @@
       collectionList.appendChild(item);
     });
     renderGames();
+  }
+
+  function compareCollections(a, b) {
+    const aKey = normalizeCollectionSortKey(a);
+    const bKey = normalizeCollectionSortKey(b);
+    if (aKey === bKey) {
+      return (a?.display_name || a?.name || "").localeCompare(b?.display_name || b?.name || "");
+    }
+    return aKey.localeCompare(bKey);
+  }
+
+  function normalizeCollectionSortKey(collection) {
+    if (!collection) {
+      return "";
+    }
+    return (collection.sort_key || collection.name || "").toLowerCase();
   }
 
   function getCurrentCollection() {
@@ -346,10 +389,7 @@
   }
 
   function normalizeRomPath(path) {
-    if (!path) {
-      return "";
-    }
-    return path.replace(/^\s*\(/, "").replace(/\)\s*$/, "");
+    return path || "";
   }
 
   function buildNameLine(prefix, nameText) {
@@ -363,6 +403,40 @@
     }
     const text = game.display_name || game.title || "";
     return text.replace(/\s*\(.+\)\s*$/, "");
+  }
+
+  function validateGameFieldsForSave(fields) {
+    const gameField = findFieldInPayload(fields, "game");
+    if (!hasNonEmptyValue(gameField)) {
+      return "game 字段不能为空";
+    }
+    const fileField = findFieldInPayload(fields, "file") || findFieldInPayload(fields, "files");
+    if (!hasNonEmptyValue(fileField)) {
+      return "file 字段不能为空";
+    }
+    const boxField = findFieldInPayload(fields, "assets.boxfront");
+    if (!hasNonEmptyValue(boxField)) {
+      return "assets.boxFront 字段不能为空";
+    }
+    return "";
+  }
+
+  function findFieldInPayload(fields, key) {
+    if (!Array.isArray(fields)) {
+      return null;
+    }
+    const lower = key.toLowerCase();
+    return (
+      fields.find((field) => field && typeof field.key === "string" && field.key.toLowerCase() === lower) ||
+      null
+    );
+  }
+
+  function hasNonEmptyValue(field) {
+    if (!field || !Array.isArray(field.values)) {
+      return false;
+    }
+    return field.values.some((value) => value && value.trim().length);
   }
 
   function findMatchingGames(query) {
@@ -554,7 +628,7 @@
       setEditStatus("当前字段不支持上传", true);
       return;
     }
-    const context = getCurrentSelectionContext();
+    const context = editContext || getCurrentSelectionContext();
     if (!context) {
       setEditStatus("请选择需要上传媒体的游戏", true);
       return;
@@ -694,17 +768,18 @@
     });
   }
 
-  function openEditModal() {
+  function openEditModal(gameOverride, contextOverride) {
     if (!editModal || !editFields) {
       return;
     }
-    const context = getCurrentSelectionContext();
-    if (!context) {
+    const baseContext = contextOverride || getCurrentSelectionContext();
+    if (!baseContext) {
       setEditStatus("请先选择一个游戏", true);
       return;
     }
+    editContext = { ...baseContext };
     removedFields = [];
-    populateEditFields(context.game);
+    populateEditFields(gameOverride || baseContext.game);
     setEditStatus("");
     editModal.classList.remove("hidden");
   }
@@ -714,6 +789,7 @@
       editModal.classList.add("hidden");
     }
     removedFields = [];
+    editContext = null;
   }
 
   function openDeleteModal() {
@@ -812,7 +888,8 @@
         select.appendChild(option);
       });
       select.addEventListener("change", () => {
-        updateRowKey(row, select.value, getCurrentSelectionContext()?.game);
+        const previewGame = editContext?.game || getCurrentSelectionContext()?.game;
+        updateRowKey(row, select.value, previewGame);
       });
       keyElement = select;
     } else {
@@ -907,12 +984,6 @@
     return payload;
   }
 
-  function ensureGameField(fields) {
-    return fields.some(
-      (field) => field.key.toLowerCase() === "game" && field.values && field.values.length,
-    );
-  }
-
   function setEditStatus(message, isError = false) {
     if (!editStatus) {
       return;
@@ -931,33 +1002,41 @@
 
   async function handleEditSubmit(event) {
     event.preventDefault();
-    const context = getCurrentSelectionContext();
+    const context = editContext || getCurrentSelectionContext();
     if (!context) {
       setEditStatus("请选择需要编辑的游戏", true);
       return;
     }
     const fieldsPayload = gatherFieldPayload();
-    if (!fieldsPayload.length || !ensureGameField(fieldsPayload)) {
-      setEditStatus("请至少保留 game 字段", true);
+    const validationError = validateGameFieldsForSave(fieldsPayload);
+    if (validationError) {
+      setEditStatus(validationError, true);
       return;
     }
     setEditStatus("保存中...");
     try {
-      const res = await fetch("/api/games/update", {
+      const endpoint = context.isNew ? "/api/games/create" : "/api/games/update";
+      const body = {
+        metadata_path: context.metadata_path,
+        x_index_id: context.x_index_id,
+        fields: fieldsPayload,
+      };
+      if (!context.isNew) {
+        body.removed_fields = removedFields;
+      }
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          metadata_path: context.metadata_path,
-          x_index_id: context.x_index_id,
-          fields: fieldsPayload,
-          removed_fields: removedFields,
-        }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || "保存失败");
       }
       const data = await res.json();
+      removedFields = [];
+      editContext = null;
+      closeEditModal();
       applyCollectionUpdate(data.collection);
       if (data.collection && data.collection.id) {
         currentCollectionId = data.collection.id;
@@ -969,9 +1048,7 @@
       renderGames();
       renderFields();
       renderMedia();
-      removedFields = [];
       setEditStatus("保存成功");
-      setTimeout(() => closeEditModal(), 600);
     } catch (err) {
       setEditStatus(err.message, true);
     }
@@ -1009,8 +1086,40 @@
     });
   }
 
+  if (addGameButton) {
+    addGameButton.addEventListener("click", () => {
+      const collection = getCurrentCollection();
+      if (!collection) {
+        setEditStatus("请选择需要添加游戏的合集", true);
+        return;
+      }
+      const newId = getNextXIndex(collection);
+      const defaultGame = {
+        x_index_id: newId,
+        fields: buildDefaultFieldsForNewGame(collection, newId),
+        title: "",
+        display_name: collection.dir_name || "",
+        rel_rom_path: "",
+      };
+      const contextOverride = {
+        metadata_path: collection.metadata_path,
+        x_index_id: newId,
+        collection,
+        game: defaultGame,
+        isNew: true,
+      };
+      openEditModal(defaultGame, contextOverride);
+    });
+  }
   if (editButton) {
-    editButton.addEventListener("click", openEditModal);
+    editButton.addEventListener("click", () => {
+      const context = getCurrentSelectionContext();
+      if (!context) {
+        setEditStatus("请选择需要编辑的游戏", true);
+        return;
+      }
+      openEditModal(context.game, { ...context, isNew: false });
+    });
   }
   if (deleteButton) {
     deleteButton.addEventListener("click", () => {
