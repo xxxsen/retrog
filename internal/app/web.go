@@ -343,7 +343,7 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = metadataPath
+	fieldKey := strings.ToLower(strings.TrimSpace(r.FormValue("field")))
 	xIndexID, err := strconv.Atoi(strings.TrimSpace(r.FormValue("x_index_id")))
 	if err != nil {
 		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
@@ -362,6 +362,21 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 	if xIndexID <= 0 {
 		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
 		return
+	}
+	if isRomFieldKey(fieldKey) {
+		doc, err := metadata.ParseMetadataFile(metadataPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("load metadata failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		var currentBlock *metadata.Block
+		if blk, _, err := findGameBlockByIndexID(doc, xIndexID); err == nil {
+			currentBlock = blk
+		}
+		if err := ensureUniqueRomUpload(doc, currentBlock, header.Filename); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 	}
 	token, stagedPath, err := c.stageMediaUpload(header.Filename, file)
 	if err != nil {
@@ -825,6 +840,67 @@ func fieldExists(fields []*fieldPayload, key string) bool {
 		}
 	}
 	return false
+}
+
+func isRomFieldKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "file", "files":
+		return true
+	default:
+		return false
+	}
+}
+
+func ensureUniqueRomUpload(doc *metadata.Document, currentBlock *metadata.Block, filename string) error {
+	normalized := normalizedRomFileName(filename)
+	if normalized == "" {
+		return nil
+	}
+	if romFileExistsInDocument(doc, currentBlock, normalized) {
+		name := sanitizeFileComponent(filename)
+		if name == "" {
+			name = filename
+		}
+		if strings.TrimSpace(name) == "" {
+			name = "ROM"
+		}
+		return fmt.Errorf("ROM 已存在: %s", name)
+	}
+	return nil
+}
+
+func romFileExistsInDocument(doc *metadata.Document, skipBlock *metadata.Block, normalizedName string) bool {
+	if doc == nil || normalizedName == "" {
+		return false
+	}
+	for _, blk := range doc.Blocks {
+		if blk == nil || blk.Kind != metadata.KindGame {
+			continue
+		}
+		if skipBlock != nil && blk == skipBlock {
+			continue
+		}
+		for _, value := range extractBlockFiles(blk) {
+			if normalizedRomFileName(value) == normalizedName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizedRomFileName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "\\", "/")
+	base := path.Base(value)
+	base = sanitizeFileComponent(base)
+	if base == "" || base == "." {
+		return ""
+	}
+	return strings.ToLower(base)
 }
 
 func allowedExtensionsForGame(doc *metadata.Document, gameBlock *metadata.Block) []string {

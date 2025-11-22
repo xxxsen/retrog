@@ -65,6 +65,7 @@
     "assets.video",
   ];
   const rowState = new WeakMap();
+  const duplicateRows = new Set();
   let removedFields = [];
   let editContext = null;
   const collectionExtensions = new Map();
@@ -405,6 +406,19 @@
     return text.replace(/\s*\(.+\)\s*$/, "");
   }
 
+  function setRowFeedback(row, message, isError) {
+    const state = getRowState(row);
+    if (!state || !state.feedbackEl) {
+      return;
+    }
+    state.feedbackEl.textContent = message || "";
+    if (message && isError) {
+      state.feedbackEl.classList.add("error");
+    } else {
+      state.feedbackEl.classList.remove("error");
+    }
+  }
+
   function validateGameFieldsForSave(fields) {
     const gameField = findFieldInPayload(fields, "game");
     if (!hasNonEmptyValue(gameField)) {
@@ -517,6 +531,7 @@
     if (!row) {
       return;
     }
+    duplicateRows.delete(row);
     const key = (row.dataset.key || "").trim();
     if (!key) {
       return;
@@ -656,6 +671,7 @@
     const formData = new FormData();
     formData.append("metadata_path", context.metadata_path);
     formData.append("x_index_id", context.x_index_id);
+    formData.append("field", key);
     formData.append("file", file);
     try {
       const res = await fetch("/api/games/upload", {
@@ -664,6 +680,11 @@
       });
       if (!res.ok) {
         const text = await res.text();
+        if (res.status === 409) {
+          const duplicateError = new Error(text || "ROM 已存在");
+          duplicateError.isDuplicate = true;
+          throw duplicateError;
+        }
         throw new Error(text || "上传失败");
       }
       const data = await res.json();
@@ -678,8 +699,16 @@
           state.previewEl.innerHTML = "";
         }
       }
+      duplicateRows.delete(row);
+      setRowFeedback(row, "", false);
       setEditStatus("上传成功");
     } catch (err) {
+      if (err && err.isDuplicate) {
+        duplicateRows.add(row);
+        setRowFeedback(row, err.message || "ROM 已存在", true);
+        setEditStatus(err.message || "ROM 已存在", true);
+        return;
+      }
       setEditStatus(err.message, true);
     }
   }
@@ -779,6 +808,7 @@
     }
     removedFields = [];
     editContext = null;
+    duplicateRows.clear();
   }
 
   function openDeleteModal() {
@@ -914,6 +944,9 @@
     keyWrapper.appendChild(keyElement);
     valueWrapper.appendChild(valueArea);
     valueWrapper.appendChild(uploadControls);
+    const feedback = document.createElement("div");
+    feedback.className = "upload-feedback";
+    valueWrapper.appendChild(feedback);
 
     row.appendChild(keyWrapper);
     row.appendChild(valueWrapper);
@@ -932,6 +965,7 @@
       valueArea,
       uploadControls,
       previewEl: preview,
+      feedbackEl: feedback,
     });
     updateRowKey(row, field.key || "", options.sourceGame || null);
     return row;
@@ -978,6 +1012,10 @@
 
   async function handleEditSubmit(event) {
     event.preventDefault();
+    if (duplicateRows.size > 0) {
+      setEditStatus("存在重复的 ROM 文件，请重新上传", true);
+      return;
+    }
     const context = editContext || getCurrentSelectionContext();
     if (!context) {
       setEditStatus("请选择需要编辑的游戏", true);
