@@ -698,18 +698,7 @@
       return;
     }
     fieldEmpty.style.display = "none";
-    const orderedFields = [...game.fields];
-    orderedFields.sort((a, b) => {
-      const aKey = (a?.key || "").toLowerCase();
-      const bKey = (b?.key || "").toLowerCase();
-      if (aKey === INDEX_FIELD_KEY) {
-        return -1;
-      }
-      if (bKey === INDEX_FIELD_KEY) {
-        return 1;
-      }
-      return 0;
-    });
+    const orderedFields = [...game.fields].sort(fieldSortComparator);
     orderedFields.forEach((field) => {
       const row = document.createElement("div");
       row.className = "field-row";
@@ -815,20 +804,7 @@
     const multipleFileValues = fileField && fileField.values && fileField.values.length > 1;
     const fallback = { key: "game", values: [game && game.title ? game.title : ""] };
     const fields = game && Array.isArray(game.fields) && game.fields.length ? game.fields : [fallback];
-    fields.sort((a, b) => {
-      if (!a || !b) {
-        return 0;
-      }
-      const aKey = (a.key || "").toLowerCase();
-      const bKey = (b.key || "").toLowerCase();
-      if (aKey === INDEX_FIELD_KEY) {
-        return -1;
-      }
-      if (bKey === INDEX_FIELD_KEY) {
-        return 1;
-      }
-      return 0;
-    });
+    fields.sort(fieldSortComparator);
     fields.forEach((field) => {
       const keyLower = (field.key || "").toLowerCase();
       const isIndexField = keyLower === INDEX_FIELD_KEY;
@@ -1224,3 +1200,30 @@
   }
   init();
 })();
+  function fieldSortComparator(a, b) {
+    if (!a || !b) {
+      return 0;
+    }
+    const aKey = (a.key || "").toLowerCase();
+    const bKey = (b.key || "").toLowerCase();
+    const order = ["x-index-id", "x-id", "game", "file", "files"];
+    const aIndex = order.indexOf(aKey);
+    const bIndex = order.indexOf(bKey);
+    if (aIndex !== -1 || bIndex !== -1) {
+      if (aIndex === -1) {
+        return 1;
+      }
+      if (bIndex === -1) {
+        return -1;
+      }
+      if (aIndex !== bIndex) {
+        return aIndex - bIndex;
+      }
+    }
+    const aIsAsset = aKey.startsWith("assets.");
+    const bIsAsset = bKey.startsWith("assets.");
+    if (aIsAsset !== bIsAsset) {
+      return aIsAsset ? 1 : -1;
+    }
+    return aKey.localeCompare(bKey);
+  }
