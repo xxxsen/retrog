@@ -58,6 +58,8 @@ type gamePayload struct {
 	RomPath     string          `json:"rom_path"`
 	DisplayName string          `json:"display_name"`
 	SortKey     string          `json:"sort_key"`
+	HasBoxArt   bool            `json:"has_boxart"`
+	HasVideo    bool            `json:"has_video"`
 	Fields      []*fieldPayload `json:"fields"`
 	Assets      []*assetPayload `json:"assets"`
 }
@@ -693,6 +695,11 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 			romBase := deriveRomBase(typed.Files)
 			assets, fallbackFields := collectGameAssets(metadataDir, typed, romBase, store, logger)
 			fields = appendFallbackAssetFields(fields, fallbackFields)
+			hasBoxArt := fieldExists(fields, "assets.boxfront")
+			if !hasBoxArt {
+				hasBoxArt = fieldExists(fields, "assets.boxart")
+			}
+			hasVideo := fieldExists(fields, "assets.video")
 			game := &gamePayload{
 				Index:       gameIndex,
 				XIndexID:    blockXIndexID(blk),
@@ -700,6 +707,8 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				RomPath:     romPath,
 				DisplayName: display,
 				SortKey:     strings.TrimSpace(typed.SortBy),
+				HasBoxArt:   hasBoxArt,
+				HasVideo:    hasVideo,
 				Fields:      fields,
 				Assets:      assets,
 			}
@@ -755,6 +764,19 @@ func appendFallbackAssetFields(fields []*fieldPayload, fallback map[string]fallb
 		})
 	}
 	return fields
+}
+
+func fieldExists(fields []*fieldPayload, key string) bool {
+	key = strings.ToLower(key)
+	for _, field := range fields {
+		if field == nil {
+			continue
+		}
+		if strings.ToLower(field.Key) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func allowedExtensionsForGame(doc *metadata.Document, gameBlock *metadata.Block) []string {

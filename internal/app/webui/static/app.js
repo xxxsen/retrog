@@ -256,13 +256,16 @@
     }
     matches.forEach(({ collection, game }) => {
       const item = document.createElement("li");
-      const labelParts = [];
-      if (!searchCollectionId) {
-        labelParts.push(collection.display_name || collection.name);
-      }
-      labelParts.push(game.display_name || game.title);
-      item.textContent = labelParts.join(" · ");
-      item.className = "list-item";
+      item.className = "list-item list-item-multiline";
+      const prefix = buildMediaPrefix(game);
+      const nameLine = document.createElement("div");
+      nameLine.className = "game-name-line";
+      nameLine.textContent = buildNameLine(prefix, game.display_name || game.title);
+      const pathLine = document.createElement("div");
+      pathLine.className = "game-path-line";
+      pathLine.textContent = normalizeRomPath(game.rom_path);
+      item.appendChild(nameLine);
+      item.appendChild(pathLine);
       if (game.id === currentGameId) {
         item.classList.add("active");
       }
@@ -304,8 +307,16 @@
     }
     coll.games.forEach((game) => {
       const item = document.createElement("li");
-      item.textContent = game.display_name || game.title;
-      item.className = "list-item";
+      item.className = "list-item list-item-multiline";
+      const prefix = buildMediaPrefix(game);
+      const nameLine = document.createElement("div");
+      nameLine.className = "game-name-line";
+      nameLine.textContent = buildNameLine(prefix, game.display_name || game.title);
+      const pathLine = document.createElement("div");
+      pathLine.className = "game-path-line";
+      pathLine.textContent = normalizeRomPath(game.rom_path);
+      item.appendChild(nameLine);
+      item.appendChild(pathLine);
       if (game.id === currentGameId) {
         item.classList.add("active");
       }
@@ -319,6 +330,24 @@
     });
     renderFields();
     renderMedia();
+  }
+
+  function buildMediaPrefix(game) {
+    const boxEmoji = game?.has_boxart ? "🎨" : "🚫";
+    const videoEmoji = game?.has_video ? "🎞️" : "🚫";
+    return `${boxEmoji}${videoEmoji} `;
+  }
+
+  function normalizeRomPath(path) {
+    if (!path) {
+      return "";
+    }
+    return path.replace(/^\s*\(/, "").replace(/\)\s*$/, "");
+  }
+
+  function buildNameLine(prefix, nameText) {
+    const name = nameText || "";
+    return prefix + name.replace(/\s*\(.+\)\s*$/, "");
   }
 
   function findMatchingGames(query) {
