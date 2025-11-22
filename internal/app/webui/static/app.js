@@ -664,6 +664,10 @@
     row.appendChild(valueWrapper);
     if (removeBtn) {
       row.appendChild(removeBtn);
+    } else {
+      const placeholder = document.createElement("div");
+      placeholder.className = "remove-placeholder";
+      row.appendChild(placeholder);
     }
 
     row.dataset.key = field.key || "";
