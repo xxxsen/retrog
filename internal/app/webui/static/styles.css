@@ -48,11 +48,61 @@ body {
 .content {
   flex: 1;
   display: flex;
-  gap: 16px;
+  flex-direction: column;
+  gap: 12px;
   padding: 16px;
   height: 100vh;
   min-height: 0;
   overflow: hidden;
+}
+
+.panels {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  min-height: 0;
+}
+
+.search-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.search-bar select,
+.search-bar input,
+.search-bar button {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b121d;
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.search-bar select,
+.search-bar input {
+  flex: 1;
+}
+
+.search-bar select {
+  max-width: 220px;
+}
+
+.search-bar button {
+  flex: 0 0 auto;
+  cursor: pointer;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.search-bar button:hover {
+  opacity: 0.85;
 }
 
 section {
@@ -214,7 +264,7 @@ section {
 }
 
 @media (max-width: 1200px) {
-  .content {
+  .panels {
     flex-direction: column;
   }
 

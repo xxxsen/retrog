@@ -19,30 +19,39 @@
       <div id="collection-empty" class="empty-state">未在目录中找到 metadata.pegasus.txt</div>
     </aside>
     <main class="content">
-      <section class="games-panel">
-        <div class="panel-header">
-          <h2>游戏</h2>
-          <p class="panel-subtitle">name (rom 路径)</p>
-        </div>
-        <ul id="game-list" class="list"></ul>
-        <div id="game-empty" class="empty-state">请选择左侧的合集</div>
-      </section>
-      <section class="details-panel">
-        <div class="panel-header">
-          <h2>元信息</h2>
-          <p class="panel-subtitle">展示 metadata 中的所有字段</p>
-        </div>
-        <div id="field-list" class="fields"></div>
-        <div id="field-empty" class="empty-state">请选择游戏查看字段</div>
-      </section>
-      <section class="media-panel">
-        <div class="panel-header">
-          <h2>媒体</h2>
-          <p class="panel-subtitle">自动预览图片/视频资源</p>
-        </div>
-        <div id="media-list" class="media-grid"></div>
-        <div id="media-empty" class="empty-state">暂无媒体文件</div>
-      </section>
+      <form class="search-bar" id="search-form">
+        <select id="search-collection" aria-label="选择合集">
+          <option value="">全部合集</option>
+        </select>
+        <input id="search-input" type="text" placeholder="搜索 name / desc / file" aria-label="搜索内容" />
+        <button type="button" id="search-clear">清空</button>
+      </form>
+      <div class="panels">
+        <section class="games-panel">
+          <div class="panel-header">
+            <h2>游戏</h2>
+            <p class="panel-subtitle">name (rom 路径)</p>
+          </div>
+          <ul id="game-list" class="list"></ul>
+          <div id="game-empty" class="empty-state">请选择左侧的合集</div>
+        </section>
+        <section class="details-panel">
+          <div class="panel-header">
+            <h2>元信息</h2>
+            <p class="panel-subtitle">展示 metadata 中的所有字段</p>
+          </div>
+          <div id="field-list" class="fields"></div>
+          <div id="field-empty" class="empty-state">请选择游戏查看字段</div>
+        </section>
+        <section class="media-panel">
+          <div class="panel-header">
+            <h2>媒体</h2>
+            <p class="panel-subtitle">自动预览图片/视频资源</p>
+          </div>
+          <div id="media-list" class="media-grid"></div>
+          <div id="media-empty" class="empty-state">暂无媒体文件</div>
+        </section>
+      </div>
     </main>
   </div>
   <script src="/static/app.js"></script>
