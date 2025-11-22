@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
@@ -30,6 +31,7 @@ type WebCommand struct {
 	dir         string
 	root        string
 	bind        string
+	uploadDir   string
 	server      *http.Server
 	assets      *assetStore
 	collections []*collectionPayload
@@ -71,6 +73,7 @@ type assetPayload struct {
 }
 
 const gameIndexEntryKey = "x-index-id"
+const stagedUploadPrefix = "__upload__/"
 
 type updateGameRequest struct {
 	MetadataPath string          `json:"metadata_path"`
@@ -84,8 +87,19 @@ type gameUpdateResponse struct {
 	FilePath   string             `json:"file_path,omitempty"`
 }
 
+type uploadMediaResponse struct {
+	FilePath string        `json:"file_path"`
+	Asset    *assetPayload `json:"asset"`
+}
+
+type fallbackAssetField struct {
+	Name string
+	Path string
+}
+
 type assetStore struct {
 	root  string
+	extra []string
 	mu    sync.RWMutex
 	files map[string]string
 }
@@ -124,6 +138,12 @@ func (c *WebCommand) PreRun(ctx context.Context) error {
 		return err
 	}
 	c.assets = store
+	uploadDir, err := os.MkdirTemp("", "retrog_upload")
+	if err != nil {
+		return err
+	}
+	c.uploadDir = uploadDir
+	c.assets.AddAllowedRoot(uploadDir)
 	return nil
 }
 
@@ -168,6 +188,9 @@ func (c *WebCommand) Run(ctx context.Context) error {
 func (c *WebCommand) PostRun(ctx context.Context) error {
 	if c.server != nil {
 		_ = c.server.Close()
+	}
+	if c.uploadDir != "" {
+		_ = os.RemoveAll(c.uploadDir)
 	}
 	return nil
 }
@@ -231,7 +254,7 @@ func (c *WebCommand) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "x_index_id must be positive", http.StatusBadRequest)
 		return
 	}
-	if err := updateGameMetadata(metadataPath, req.XIndexID, req.Fields); err != nil {
+	if err := c.updateGameMetadata(metadataPath, req.XIndexID, req.Fields); err != nil {
 		http.Error(w, fmt.Sprintf("update game failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -262,6 +285,7 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	_ = metadataPath
 	xIndexID, err := strconv.Atoi(strings.TrimSpace(r.FormValue("x_index_id")))
 	if err != nil {
 		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
@@ -281,22 +305,59 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
 		return
 	}
-	relPath, err := storeGameMedia(metadataPath, xIndexID, header.Filename, file)
+	token, stagedPath, err := c.stageMediaUpload(header.Filename, file)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("store media failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("stage media failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	if err := c.reloadCollections(r.Context()); err != nil {
-		http.Error(w, fmt.Sprintf("reload collections failed: %v", err), http.StatusInternalServerError)
+	payload, err := c.buildStagedAssetPayload(stagedPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("build asset payload failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	coll, game := c.findGamePayload(filepath.ToSlash(metadataPath), xIndexID)
-	if coll == nil || game == nil {
-		http.Error(w, "updated game not found", http.StatusNotFound)
-		return
+	resp := &uploadMediaResponse{
+		FilePath: token,
+		Asset:    payload,
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(&gameUpdateResponse{Collection: coll, Game: game, FilePath: relPath})
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (c *WebCommand) stageMediaUpload(filename string, source multipart.File) (string, string, error) {
+	if c.uploadDir == "" {
+		return "", "", errors.New("upload directory not initialized")
+	}
+	name := sanitizeFileComponent(filename)
+	if name == "" {
+		name = "upload.bin"
+	}
+	stagedName := fmt.Sprintf("%d__%s", time.Now().UnixNano(), name)
+	dest := filepath.Join(c.uploadDir, stagedName)
+	out, err := os.Create(dest)
+	if err != nil {
+		return "", "", err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, source); err != nil {
+		return "", "", err
+	}
+	return stagedUploadPrefix + stagedName, dest, nil
+}
+
+func (c *WebCommand) buildStagedAssetPayload(path string) (*assetPayload, error) {
+	if c.assets == nil {
+		return nil, errors.New("asset store not initialized")
+	}
+	id, err := c.assets.Register(path)
+	if err != nil {
+		return nil, err
+	}
+	return &assetPayload{
+		Name:     filepath.Base(path),
+		Type:     detectAssetType(path),
+		URL:      "/api/assets/" + id,
+		FileName: filepath.Base(path),
+	}, nil
 }
 
 func (c *WebCommand) collectionsSnapshot() []*collectionPayload {
@@ -604,7 +665,7 @@ func convertBlockFields(blk *metadata.Block) []*fieldPayload {
 	return out
 }
 
-func appendFallbackAssetFields(fields []*fieldPayload, fallback map[string]string) []*fieldPayload {
+func appendFallbackAssetFields(fields []*fieldPayload, fallback map[string]fallbackAssetField) []*fieldPayload {
 	if len(fallback) == 0 {
 		return fields
 	}
@@ -620,24 +681,32 @@ func appendFallbackAssetFields(fields []*fieldPayload, fallback map[string]strin
 			}
 		}
 	}
-	for name, value := range fallback {
-		if _, ok := existing[name]; ok {
+	for norm, item := range fallback {
+		if _, ok := existing[norm]; ok {
+			continue
+		}
+		name := item.Name
+		if name == "" {
 			continue
 		}
 		fields = append(fields, &fieldPayload{
 			Key:    "assets." + name,
-			Values: []string{value},
+			Values: []string{item.Path},
 		})
 	}
 	return fields
 }
 
-func updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload) error {
+func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload) error {
 	doc, err := metadata.ParseMetadataFile(metadataPath)
 	if err != nil {
 		return err
 	}
 	block, err := findGameBlockByIndexID(doc, xIndexID)
+	if err != nil {
+		return err
+	}
+	fields, err = c.materializeStagedFields(metadataPath, block, fields)
 	if err != nil {
 		return err
 	}
@@ -749,6 +818,43 @@ func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map
 	return entries, nil
 }
 
+func (c *WebCommand) materializeStagedFields(metadataPath string, block *metadata.Block, fields []*fieldPayload) ([]*fieldPayload, error) {
+	if c == nil || c.uploadDir == "" {
+		return fields, nil
+	}
+	for _, field := range fields {
+		if field == nil {
+			continue
+		}
+		for idx, value := range field.Values {
+			if !strings.HasPrefix(value, stagedUploadPrefix) {
+				continue
+			}
+			rel, err := c.moveStagedFileToMedia(metadataPath, block, value)
+			if err != nil {
+				return nil, err
+			}
+			field.Values[idx] = rel
+		}
+	}
+	return fields, nil
+}
+
+func (c *WebCommand) moveStagedFileToMedia(metadataPath string, block *metadata.Block, token string) (string, error) {
+	if c.uploadDir == "" {
+		return "", errors.New("upload directory not initialized")
+	}
+	stagedName := strings.TrimPrefix(token, stagedUploadPrefix)
+	if stagedName == "" {
+		return "", fmt.Errorf("invalid staged token %q", token)
+	}
+	source := filepath.Join(c.uploadDir, filepath.FromSlash(stagedName))
+	if _, err := os.Stat(source); err != nil {
+		return "", err
+	}
+	return moveFileToMedia(metadataPath, block, source, stagedName)
+}
+
 func normalizeFieldValues(values []string) []string {
 	var out []string
 	for _, value := range values {
@@ -762,44 +868,59 @@ func normalizeFieldValues(values []string) []string {
 	return out
 }
 
-func storeGameMedia(metadataPath string, xIndexID int, filename string, source multipart.File) (string, error) {
-	doc, err := metadata.ParseMetadataFile(metadataPath)
-	if err != nil {
-		return "", err
-	}
-	block, err := findGameBlockByIndexID(doc, xIndexID)
-	if err != nil {
-		return "", err
-	}
+func moveFileToMedia(metadataPath string, block *metadata.Block, sourcePath, stagedName string) (string, error) {
+	metadataDir := filepath.Dir(metadataPath)
 	romBase := deriveRomBase(extractBlockFiles(block))
 	if romBase == "" {
 		romBase = sanitizeFileComponent(getBlockTitle(block))
 	}
-	mediaDir := filepath.Join(filepath.Dir(metadataPath), "media")
+	mediaDir := filepath.Join(metadataDir, "media")
 	if romBase != "" {
 		mediaDir = filepath.Join(mediaDir, romBase)
 	}
 	if err := os.MkdirAll(mediaDir, 0o755); err != nil {
 		return "", err
 	}
-	name := sanitizeFileComponent(filename)
-	if name == "" {
-		return "", errors.New("invalid filename")
+	baseName := stagedName
+	if idx := strings.Index(baseName, "__"); idx >= 0 && idx+2 < len(baseName) {
+		baseName = baseName[idx+2:]
 	}
-	destPath := filepath.Join(mediaDir, name)
-	out, err := os.Create(destPath)
-	if err != nil {
-		return "", err
+	if baseName == "" {
+		baseName = filepath.Base(sourcePath)
 	}
-	defer out.Close()
-	if _, err := io.Copy(out, source); err != nil {
-		return "", err
+	destPath := filepath.Join(mediaDir, baseName)
+	if err := os.Rename(sourcePath, destPath); err != nil {
+		if err := copyFileContents(sourcePath, destPath); err != nil {
+			return "", err
+		}
+		if err := os.Remove(sourcePath); err != nil {
+			return "", err
+		}
 	}
-	rel, err := filepath.Rel(filepath.Dir(metadataPath), destPath)
+	rel, err := filepath.Rel(metadataDir, destPath)
 	if err != nil {
 		rel = destPath
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+func copyFileContents(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = out.Close()
+	}()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 func extractBlockFiles(blk *metadata.Block) []string {
@@ -875,13 +996,13 @@ func deriveRomBase(files []string) string {
 	return ""
 }
 
-func collectGameAssets(metadataDir string, game metadata.Game, romBase string, store *assetStore, logger *zap.Logger) ([]*assetPayload, map[string]string) {
+func collectGameAssets(metadataDir string, game metadata.Game, romBase string, store *assetStore, logger *zap.Logger) ([]*assetPayload, map[string]fallbackAssetField) {
 	type assetCandidate struct {
 		name string
 		path string
 	}
 	resolved := make(map[string]assetCandidate)
-	fallbackValues := make(map[string]string)
+	fallbackValues := make(map[string]fallbackAssetField)
 	metadataKeys := make(map[string]struct{})
 	for name, assetPath := range game.Assets {
 		norm := normalizeAssetKey(name)
@@ -917,7 +1038,10 @@ func collectGameAssets(metadataDir string, game metadata.Game, romBase string, s
 				if relErr != nil {
 					rel = absPath
 				}
-				fallbackValues[norm] = filepath.ToSlash(rel)
+				fallbackValues[norm] = fallbackAssetField{
+					Name: cleanKey,
+					Path: filepath.ToSlash(rel),
+				}
 			}
 		}
 	}
@@ -953,8 +1077,12 @@ func collectGameAssets(metadataDir string, game metadata.Game, romBase string, s
 		})
 	}
 	// remove fallback entries that already existed in metadata
-	for norm := range fallbackValues {
+	for norm, entry := range fallbackValues {
 		if _, ok := metadataKeys[norm]; ok {
+			delete(fallbackValues, norm)
+			continue
+		}
+		if entry.Path == "" {
 			delete(fallbackValues, norm)
 		}
 	}
@@ -1039,7 +1167,30 @@ func (s *assetStore) contains(path string) bool {
 		return true
 	}
 	prefix := s.root + string(os.PathSeparator)
-	return strings.HasPrefix(path, prefix)
+	if strings.HasPrefix(path, prefix) {
+		return true
+	}
+	for _, extra := range s.extra {
+		if path == extra {
+			return true
+		}
+		prefix := extra + string(os.PathSeparator)
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *assetStore) AddAllowedRoot(path string) {
+	if s == nil {
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	s.extra = append(s.extra, filepath.Clean(abs))
 }
 
 func buildCollectionID(metadataPath string, idx int) string {

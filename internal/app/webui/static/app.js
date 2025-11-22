@@ -411,6 +411,37 @@
     }
   }
 
+  function renderAssetPreviewFromPayload(container, asset) {
+    if (!container) {
+      return;
+    }
+    container.innerHTML = "";
+    if (!asset) {
+      return;
+    }
+    if (asset.type === "image") {
+      const img = document.createElement("img");
+      img.src = asset.url;
+      img.alt = asset.name || asset.file_name || "";
+      container.appendChild(img);
+      return;
+    }
+    if (asset.type === "video") {
+      const video = document.createElement("video");
+      video.src = asset.url;
+      video.controls = true;
+      video.preload = "metadata";
+      container.appendChild(video);
+      return;
+    }
+    const link = document.createElement("a");
+    link.href = asset.url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = asset.file_name || "查看文件";
+    container.appendChild(link);
+  }
+
   function startRowUpload(row) {
     const key = (row.dataset.key || "").trim().toLowerCase();
     if (!isAssetKey(key)) {
@@ -449,24 +480,17 @@
         throw new Error(text || "上传失败");
       }
       const data = await res.json();
-      applyCollectionUpdate(data.collection);
-      if (data.collection && data.collection.id) {
-        currentCollectionId = data.collection.id;
-      }
-      if (data.game && data.game.id) {
-        currentGameId = data.game.id;
-      }
-      renderCollections();
-      renderGames();
-      renderFields();
-      renderMedia();
       const state = getRowState(row);
       if (state.valueArea && data.file_path) {
         state.valueArea.value = data.file_path;
       }
-      const updatedContext = getCurrentSelectionContext();
-      const previewGame = updatedContext ? updatedContext.game : data.game;
-      refreshAssetPreview(row, key, previewGame || data.game);
+      if (state.previewEl) {
+        if (data.asset) {
+          renderAssetPreviewFromPayload(state.previewEl, data.asset);
+        } else {
+          state.previewEl.innerHTML = "";
+        }
+      }
       setEditStatus("上传成功");
     } catch (err) {
       setEditStatus(err.message, true);
