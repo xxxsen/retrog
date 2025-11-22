@@ -24,6 +24,7 @@ import (
 	"github.com/xxxsen/common/logutil"
 	"github.com/xxxsen/retrog/internal/constant"
 	"github.com/xxxsen/retrog/internal/metadata"
+	"github.com/xxxsen/retrog/internal/webui"
 	"go.uber.org/zap"
 )
 
@@ -182,7 +183,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", c.handleIndex)
-	staticFS, err := fs.Sub(webContent, "webui/static")
+	staticFS, err := fs.Sub(webui.Content, "static")
 	if err != nil {
 		return err
 	}
@@ -225,7 +226,7 @@ func (c *WebCommand) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data, err := webContent.ReadFile("webui/index.html")
+	data, err := webui.Content.ReadFile("index.html")
 	if err != nil {
 		http.Error(w, "failed to load ui", http.StatusInternalServerError)
 		return
