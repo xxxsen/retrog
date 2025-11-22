@@ -208,6 +208,7 @@ func (c *WebCommand) handleAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	http.ServeFile(w, r, path)
 }
 
@@ -570,7 +571,8 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				display = fmt.Sprintf("%s (%s)", title, romPath)
 			}
 			romBase := deriveRomBase(typed.Files)
-			assets := collectGameAssets(metadataDir, typed, romBase, store, logger)
+			assets, fallbackFields := collectGameAssets(metadataDir, typed, romBase, store, logger)
+			fields = appendFallbackAssetFields(fields, fallbackFields)
 			game := &gamePayload{
 				Index:       gameIndex,
 				XIndexID:    blockXIndexID(blk),
@@ -600,6 +602,34 @@ func convertBlockFields(blk *metadata.Block) []*fieldPayload {
 		out = append(out, &fieldPayload{Key: entry.Key, Values: cp})
 	}
 	return out
+}
+
+func appendFallbackAssetFields(fields []*fieldPayload, fallback map[string]string) []*fieldPayload {
+	if len(fallback) == 0 {
+		return fields
+	}
+	existing := make(map[string]struct{})
+	for _, field := range fields {
+		if field == nil {
+			continue
+		}
+		if strings.HasPrefix(field.Key, "assets.") {
+			name := normalizeAssetKey(strings.TrimPrefix(field.Key, "assets."))
+			if name != "" {
+				existing[name] = struct{}{}
+			}
+		}
+	}
+	for name, value := range fallback {
+		if _, ok := existing[name]; ok {
+			continue
+		}
+		fields = append(fields, &fieldPayload{
+			Key:    "assets." + name,
+			Values: []string{value},
+		})
+	}
+	return fields
 }
 
 func updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload) error {
@@ -845,18 +875,21 @@ func deriveRomBase(files []string) string {
 	return ""
 }
 
-func collectGameAssets(metadataDir string, game metadata.Game, romBase string, store *assetStore, logger *zap.Logger) []*assetPayload {
+func collectGameAssets(metadataDir string, game metadata.Game, romBase string, store *assetStore, logger *zap.Logger) ([]*assetPayload, map[string]string) {
 	type assetCandidate struct {
 		name string
 		path string
 	}
 	resolved := make(map[string]assetCandidate)
+	fallbackValues := make(map[string]string)
+	metadataKeys := make(map[string]struct{})
 	for name, assetPath := range game.Assets {
 		norm := normalizeAssetKey(name)
 		if norm == "" {
 			continue
 		}
 		resolved[norm] = assetCandidate{name: name, path: resolveAssetPath(metadataDir, assetPath)}
+		metadataKeys[norm] = struct{}{}
 	}
 	if romBase != "" {
 		mediaDir := filepath.Join(metadataDir, "media", romBase)
@@ -878,7 +911,13 @@ func collectGameAssets(metadataDir string, game metadata.Game, romBase string, s
 				if _, exists := resolved[norm]; exists {
 					continue
 				}
-				resolved[norm] = assetCandidate{name: cleanKey, path: filepath.Join(mediaDir, key)}
+				absPath := filepath.Join(mediaDir, key)
+				resolved[norm] = assetCandidate{name: cleanKey, path: absPath}
+				rel, relErr := filepath.Rel(metadataDir, absPath)
+				if relErr != nil {
+					rel = absPath
+				}
+				fallbackValues[norm] = filepath.ToSlash(rel)
 			}
 		}
 	}
@@ -913,7 +952,13 @@ func collectGameAssets(metadataDir string, game metadata.Game, romBase string, s
 			FileName: filepath.Base(candidate.path),
 		})
 	}
-	return out
+	// remove fallback entries that already existed in metadata
+	for norm := range fallbackValues {
+		if _, ok := metadataKeys[norm]; ok {
+			delete(fallbackValues, norm)
+		}
+	}
+	return out, fallbackValues
 }
 
 func normalizeAssetKey(key string) string {
