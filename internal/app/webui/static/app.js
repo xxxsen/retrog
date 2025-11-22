@@ -11,6 +11,52 @@
   const searchInput = document.getElementById("search-input");
   const searchCollection = document.getElementById("search-collection");
   const searchClear = document.getElementById("search-clear");
+  const editButton = document.getElementById("edit-game");
+  const editModal = document.getElementById("edit-modal");
+  const editForm = document.getElementById("edit-form");
+  const editFields = document.getElementById("edit-fields");
+  const editAddField = document.getElementById("edit-add-field");
+  const editCancel = document.getElementById("edit-cancel");
+  const editClose = document.getElementById("edit-close");
+  const editStatus = document.getElementById("edit-status");
+  const INDEX_FIELD_KEY = "x-index-id";
+  const KNOWN_GAME_FIELDS = [
+    "game",
+    "sort-by",
+    "sort_name",
+    "sort_title",
+    "file",
+    "files",
+    "developer",
+    "developers",
+    "publisher",
+    "publishers",
+    "genre",
+    "genres",
+    "tag",
+    "tags",
+    "summary",
+    "description",
+    "players",
+    "release",
+    "rating",
+    "launch",
+    "command",
+    "workdir",
+    "cwd",
+    "assets.boxart",
+    "assets.boxfront",
+    "assets.boxback",
+    "assets.logo",
+    "assets.banner",
+    "assets.poster",
+    "assets.clearlogo",
+    "assets.marquee",
+    "assets.screenshot",
+    "assets.background",
+    "assets.video",
+  ];
+  const rowState = new WeakMap();
 
   let collections = [];
   let currentCollectionId = null;
@@ -113,6 +159,30 @@
       }
     }
     return { game: null, collection: null };
+  }
+
+  function getCurrentSelectionContext() {
+    const { game, collection } = findGameWithCollectionById(currentGameId);
+    if (!game || !collection) {
+      return null;
+    }
+    return {
+      game,
+      collection,
+      metadata_path: collection.metadata_path,
+      x_index_id: game.x_index_id,
+    };
+  }
+
+  function isAssetKey(key) {
+    return Boolean(key) && key.toLowerCase().startsWith("assets.");
+  }
+
+  function assetNameFromKey(key) {
+    if (!isAssetKey(key)) {
+      return "";
+    }
+    return key.toLowerCase().replace(/^assets\./, "");
   }
 
   function renderGames() {
@@ -247,6 +317,162 @@
     return values.join("\n");
   }
 
+  function applyCollectionUpdate(updated) {
+    if (!updated) {
+      return;
+    }
+    const idx = collections.findIndex(
+      (c) => c.metadata_path === updated.metadata_path && c.index === updated.index,
+    );
+    if (idx === -1) {
+      collections.push(updated);
+    } else {
+      collections[idx] = updated;
+    }
+    populateCollectionFilterOptions();
+  }
+
+  function getUsedKeys() {
+    const used = new Set();
+    if (!editFields) {
+      return used;
+    }
+    editFields.querySelectorAll(".edit-field-row").forEach((row) => {
+      const key = (row.dataset.key || "").trim().toLowerCase();
+      if (key) {
+        used.add(key);
+      }
+    });
+    return used;
+  }
+
+  function getRowState(row) {
+    return rowState.get(row) || {};
+  }
+
+  function updateRowKey(row, newKey, game) {
+    const state = getRowState(row);
+    const rawKey = (newKey || "").trim();
+    const normalized = rawKey.toLowerCase();
+    row.dataset.key = normalized;
+    if (state.keyDisplay) {
+      state.keyDisplay.textContent = rawKey || "(未选择)";
+      state.keyDisplay.title = rawKey;
+    }
+    if (state.keySelect && state.keySelect.value !== rawKey) {
+      state.keySelect.value = rawKey;
+    }
+    if (isAssetKey(normalized)) {
+      if (state.uploadControls) {
+        state.uploadControls.classList.remove("hidden");
+      }
+      refreshAssetPreview(row, normalized, game);
+    } else if (state.uploadControls) {
+      state.uploadControls.classList.add("hidden");
+      if (state.previewEl) {
+        state.previewEl.innerHTML = "";
+      }
+    }
+  }
+
+  function refreshAssetPreview(row, key, game) {
+    if (!isAssetKey(key)) {
+      return;
+    }
+    const state = getRowState(row);
+    const previewEl = state.previewEl;
+    if (!previewEl || !game || !Array.isArray(game.assets)) {
+      return;
+    }
+    const assetName = assetNameFromKey(key).toLowerCase();
+    const asset = game.assets.find((item) => (item.name || "").toLowerCase() === assetName);
+    previewEl.innerHTML = "";
+    if (!asset) {
+      return;
+    }
+    if (asset.type === "image") {
+      const img = document.createElement("img");
+      img.src = asset.url;
+      img.alt = asset.name;
+      previewEl.appendChild(img);
+    } else if (asset.type === "video") {
+      const video = document.createElement("video");
+      video.src = asset.url;
+      video.controls = true;
+      video.preload = "metadata";
+      previewEl.appendChild(video);
+    } else {
+      const link = document.createElement("a");
+      link.href = asset.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = asset.file_name || "查看文件";
+      previewEl.appendChild(link);
+    }
+  }
+
+  function startRowUpload(row) {
+    const key = (row.dataset.key || "").trim().toLowerCase();
+    if (!isAssetKey(key)) {
+      setEditStatus("当前字段不支持上传", true);
+      return;
+    }
+    const context = getCurrentSelectionContext();
+    if (!context) {
+      setEditStatus("请选择需要上传媒体的游戏", true);
+      return;
+    }
+    const fileInput = document.createElement("input");
+    fileInput.type = "file";
+    fileInput.accept = "image/*,video/*";
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files && fileInput.files[0]) {
+        uploadFileForRow(row, fileInput.files[0], key, context);
+      }
+    });
+    fileInput.click();
+  }
+
+  async function uploadFileForRow(row, file, key, context) {
+    setEditStatus("上传中...");
+    const formData = new FormData();
+    formData.append("metadata_path", context.metadata_path);
+    formData.append("x_index_id", context.x_index_id);
+    formData.append("file", file);
+    try {
+      const res = await fetch("/api/games/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "上传失败");
+      }
+      const data = await res.json();
+      applyCollectionUpdate(data.collection);
+      if (data.collection && data.collection.id) {
+        currentCollectionId = data.collection.id;
+      }
+      if (data.game && data.game.id) {
+        currentGameId = data.game.id;
+      }
+      renderCollections();
+      renderGames();
+      renderFields();
+      renderMedia();
+      const state = getRowState(row);
+      if (state.valueArea && data.file_path) {
+        state.valueArea.value = data.file_path;
+      }
+      const updatedContext = getCurrentSelectionContext();
+      const previewGame = updatedContext ? updatedContext.game : data.game;
+      refreshAssetPreview(row, key, previewGame || data.game);
+      setEditStatus("上传成功");
+    } catch (err) {
+      setEditStatus(err.message, true);
+    }
+  }
+
   function renderFields() {
     fieldList.innerHTML = "";
     const { game } = findGameWithCollectionById(currentGameId);
@@ -319,6 +545,222 @@
     });
   }
 
+  function openEditModal() {
+    if (!editModal || !editFields) {
+      return;
+    }
+    const context = getCurrentSelectionContext();
+    if (!context) {
+      setEditStatus("请先选择一个游戏", true);
+      return;
+    }
+    populateEditFields(context.game);
+    setEditStatus("");
+    editModal.classList.remove("hidden");
+  }
+
+  function closeEditModal() {
+    if (editModal) {
+      editModal.classList.add("hidden");
+    }
+  }
+
+  function populateEditFields(game) {
+    editFields.innerHTML = "";
+    const fallback = { key: "game", values: [game && game.title ? game.title : ""] };
+    const fields = game && Array.isArray(game.fields) && game.fields.length ? game.fields : [fallback];
+    fields.forEach((field) => {
+      const keyLower = (field.key || "").toLowerCase();
+      const isIndexField = keyLower === INDEX_FIELD_KEY;
+      editFields.appendChild(
+        createEditableFieldRow(field, {
+          isNew: false,
+          sourceGame: game,
+          locked: isIndexField,
+          allowRemove: !isIndexField,
+        }),
+      );
+    });
+  }
+
+  function createEditableFieldRow(field = { key: "", values: [] }, options = {}) {
+    const row = document.createElement("div");
+    row.className = "edit-field-row";
+    const keyWrapper = document.createElement("div");
+    keyWrapper.className = "edit-field-key-wrapper";
+    const valueWrapper = document.createElement("div");
+    valueWrapper.className = "edit-field-value-wrapper";
+    const disabledKeys = new Set(
+      (options.disabledKeys ? Array.from(options.disabledKeys) : []).map((k) => k.toLowerCase()),
+    );
+    const locked = Boolean(options.locked);
+    const allowRemove = options.allowRemove !== false && !locked;
+
+    let keyElement;
+    if (options.isNew) {
+      const select = document.createElement("select");
+      select.className = "edit-field-key-select";
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "选择字段";
+      select.appendChild(placeholder);
+      KNOWN_GAME_FIELDS.forEach((name) => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        if (disabledKeys.has(name.toLowerCase())) {
+          option.disabled = true;
+        }
+        select.appendChild(option);
+      });
+      select.addEventListener("change", () => {
+        updateRowKey(row, select.value, getCurrentSelectionContext()?.game);
+      });
+      keyElement = select;
+    } else {
+      const display = document.createElement("div");
+      display.className = "edit-field-key-display";
+      display.textContent = field.key || "";
+      display.title = field.key || "";
+      keyElement = display;
+    }
+
+    const valueArea = document.createElement("textarea");
+    valueArea.className = "edit-field-value";
+    valueArea.placeholder = "多个值使用换行分隔";
+    valueArea.value = (field.values || []).join("\n");
+    if (locked) {
+      valueArea.readOnly = true;
+      valueArea.classList.add("readonly");
+    }
+
+    const uploadControls = document.createElement("div");
+    uploadControls.className = "asset-upload-controls hidden";
+    const uploadBtn = document.createElement("button");
+    uploadBtn.type = "button";
+    uploadBtn.textContent = "上传文件";
+    uploadBtn.addEventListener("click", () => startRowUpload(row));
+    const preview = document.createElement("div");
+    preview.className = "asset-preview";
+    uploadControls.appendChild(uploadBtn);
+    uploadControls.appendChild(preview);
+
+    let removeBtn = null;
+    if (allowRemove) {
+      removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "remove-field";
+      removeBtn.textContent = "删除";
+      removeBtn.addEventListener("click", () => {
+        row.remove();
+      });
+    }
+
+    keyWrapper.appendChild(keyElement);
+    valueWrapper.appendChild(valueArea);
+    valueWrapper.appendChild(uploadControls);
+
+    row.appendChild(keyWrapper);
+    row.appendChild(valueWrapper);
+    if (removeBtn) {
+      row.appendChild(removeBtn);
+    }
+
+    row.dataset.key = field.key || "";
+    rowState.set(row, {
+      keySelect: options.isNew ? keyElement : null,
+      keyDisplay: options.isNew ? null : keyElement,
+      valueArea,
+      uploadControls,
+      previewEl: preview,
+    });
+    updateRowKey(row, field.key || "", options.sourceGame || null);
+    return row;
+  }
+
+  function gatherFieldPayload() {
+    if (!editFields) {
+      return [];
+    }
+    const rows = Array.from(editFields.querySelectorAll(".edit-field-row"));
+    const payload = [];
+    rows.forEach((row) => {
+      const state = getRowState(row);
+      const valueArea = state.valueArea;
+      if (!valueArea) {
+        return;
+      }
+      const keySelect = state.keySelect;
+      const key = keySelect ? keySelect.value.trim().toLowerCase() : (row.dataset.key || "").trim();
+      const rawValues = valueArea.value.replace(/\r/g, "").split("\n");
+      const values = rawValues.map((v) => v.trim()).filter((v) => v.length);
+      if (key) {
+        payload.push({ key, values });
+      }
+    });
+    return payload;
+  }
+
+  function ensureGameField(fields) {
+    return fields.some(
+      (field) => field.key.toLowerCase() === "game" && field.values && field.values.length,
+    );
+  }
+
+  function setEditStatus(message, isError = false) {
+    if (!editStatus) {
+      return;
+    }
+    editStatus.textContent = message;
+    editStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
+  }
+
+  async function handleEditSubmit(event) {
+    event.preventDefault();
+    const context = getCurrentSelectionContext();
+    if (!context) {
+      setEditStatus("请选择需要编辑的游戏", true);
+      return;
+    }
+    const fieldsPayload = gatherFieldPayload();
+    if (!fieldsPayload.length || !ensureGameField(fieldsPayload)) {
+      setEditStatus("请至少保留 game 字段", true);
+      return;
+    }
+    setEditStatus("保存中...");
+    try {
+      const res = await fetch("/api/games/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          metadata_path: context.metadata_path,
+          x_index_id: context.x_index_id,
+          fields: fieldsPayload,
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "保存失败");
+      }
+      const data = await res.json();
+      applyCollectionUpdate(data.collection);
+      if (data.collection && data.collection.id) {
+        currentCollectionId = data.collection.id;
+      }
+      if (data.game && data.game.id) {
+        currentGameId = data.game.id;
+      }
+      renderCollections();
+      renderGames();
+      renderFields();
+      renderMedia();
+      setEditStatus("保存成功");
+      setTimeout(() => closeEditModal(), 600);
+    } catch (err) {
+      setEditStatus(err.message, true);
+    }
+  }
+
   if (searchForm) {
     searchForm.addEventListener("submit", (event) => event.preventDefault());
   }
@@ -351,5 +793,41 @@
     });
   }
 
+  if (editButton) {
+    editButton.addEventListener("click", openEditModal);
+  }
+  if (editAddField) {
+    editAddField.addEventListener("click", () => {
+      if (editFields) {
+        const used = getUsedKeys();
+        const available = KNOWN_GAME_FIELDS.filter((name) => !used.has(name.toLowerCase()));
+        if (!available.length) {
+          setEditStatus("所有字段均已存在", true);
+          return;
+        }
+        editFields.appendChild(
+          createEditableFieldRow({ key: "", values: [] }, { isNew: true, disabledKeys: used }),
+        );
+      }
+    });
+  }
+  if (editCancel) {
+    editCancel.addEventListener("click", () => {
+      closeEditModal();
+    });
+  }
+  if (editClose) {
+    editClose.addEventListener("click", closeEditModal);
+  }
+  if (editModal) {
+    editModal.addEventListener("click", (event) => {
+      if (event.target === editModal) {
+        closeEditModal();
+      }
+    });
+  }
+  if (editForm) {
+    editForm.addEventListener("submit", handleEditSubmit);
+  }
   init();
 })();

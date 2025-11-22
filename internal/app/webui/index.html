@@ -36,9 +36,12 @@
           <div id="game-empty" class="empty-state">请选择左侧的合集</div>
         </section>
         <section class="details-panel">
-          <div class="panel-header">
-            <h2>元信息</h2>
-            <p class="panel-subtitle">展示 metadata 中的所有字段</p>
+          <div class="panel-header with-action">
+            <div>
+              <h2>元信息</h2>
+              <p class="panel-subtitle">展示 metadata 中的所有字段</p>
+            </div>
+            <button type="button" id="edit-game" class="ghost">编辑</button>
           </div>
           <div id="field-list" class="fields"></div>
           <div id="field-empty" class="empty-state">请选择游戏查看字段</div>
@@ -53,6 +56,27 @@
         </section>
       </div>
     </main>
+  </div>
+  <div id="edit-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>编辑游戏元信息</h3>
+        <button type="button" id="edit-close">×</button>
+      </div>
+      <form id="edit-form" class="edit-form">
+        <div id="edit-fields" class="edit-fields"></div>
+        <div class="edit-actions">
+          <div class="left">
+            <button type="button" id="edit-add-field">新增字段</button>
+          </div>
+          <div class="right">
+            <button type="button" id="edit-cancel">取消</button>
+            <button type="submit">保存</button>
+          </div>
+        </div>
+      </form>
+      <div id="edit-status" class="edit-status"></div>
+    </div>
   </div>
   <script src="/static/app.js"></script>
 </body>

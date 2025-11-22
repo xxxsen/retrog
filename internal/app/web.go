@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -26,13 +29,16 @@ import (
 type WebCommand struct {
 	dir         string
 	root        string
+	bind        string
 	server      *http.Server
 	assets      *assetStore
 	collections []*collectionPayload
+	dataMu      sync.RWMutex
 }
 
 type collectionPayload struct {
 	ID           string         `json:"id"`
+	Index        int            `json:"index"`
 	Name         string         `json:"name"`
 	DirName      string         `json:"dir_name"`
 	DisplayName  string         `json:"display_name"`
@@ -43,6 +49,8 @@ type collectionPayload struct {
 
 type gamePayload struct {
 	ID          string          `json:"id"`
+	Index       int             `json:"index"`
+	XIndexID    int             `json:"x_index_id"`
 	Title       string          `json:"title"`
 	RomPath     string          `json:"rom_path"`
 	DisplayName string          `json:"display_name"`
@@ -62,13 +70,27 @@ type assetPayload struct {
 	FileName string `json:"file_name"`
 }
 
+const gameIndexEntryKey = "x-index-id"
+
+type updateGameRequest struct {
+	MetadataPath string          `json:"metadata_path"`
+	XIndexID     int             `json:"x_index_id"`
+	Fields       []*fieldPayload `json:"fields"`
+}
+
+type gameUpdateResponse struct {
+	Collection *collectionPayload `json:"collection"`
+	Game       *gamePayload       `json:"game"`
+	FilePath   string             `json:"file_path,omitempty"`
+}
+
 type assetStore struct {
 	root  string
 	mu    sync.RWMutex
 	files map[string]string
 }
 
-func NewWebCommand() *WebCommand { return &WebCommand{} }
+func NewWebCommand() *WebCommand { return &WebCommand{bind: ":8080"} }
 
 func (c *WebCommand) Name() string { return "web" }
 
@@ -78,6 +100,7 @@ func (c *WebCommand) Desc() string {
 
 func (c *WebCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dir, "dir", "", "ROM 根目录")
+	f.StringVar(&c.bind, "bind", ":8080", "HTTP 监听地址，例如 0.0.0.0:8080")
 }
 
 func (c *WebCommand) PreRun(ctx context.Context) error {
@@ -110,7 +133,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c.collections = collections
+	c.setCollections(collections)
 	logger.Info("metadata loaded",
 		zap.Int("collection_count", len(collections)))
 
@@ -123,9 +146,11 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("/api/collections", c.handleCollections)
 	mux.HandleFunc("/api/assets/", c.handleAsset)
+	mux.HandleFunc("/api/games/update", c.handleUpdateGame)
+	mux.HandleFunc("/api/games/upload", c.handleUploadMedia)
 
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    c.bind,
 		Handler: mux,
 	}
 	c.server = srv
@@ -169,7 +194,7 @@ func (c *WebCommand) handleCollections(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(c.collections)
+	_ = enc.Encode(c.collectionsSnapshot())
 }
 
 func (c *WebCommand) handleAsset(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +209,153 @@ func (c *WebCommand) handleAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeFile(w, r, path)
+}
+
+func (c *WebCommand) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req updateGameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid payload: %v", err), http.StatusBadRequest)
+		return
+	}
+	metadataPath, err := c.resolveMetadataPath(req.MetadataPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.XIndexID <= 0 {
+		http.Error(w, "x_index_id must be positive", http.StatusBadRequest)
+		return
+	}
+	if err := updateGameMetadata(metadataPath, req.XIndexID, req.Fields); err != nil {
+		http.Error(w, fmt.Sprintf("update game failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := c.reloadCollections(r.Context()); err != nil {
+		http.Error(w, fmt.Sprintf("reload collections failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	coll, game := c.findGamePayload(filepath.ToSlash(metadataPath), req.XIndexID)
+	if coll == nil || game == nil {
+		http.Error(w, "updated game not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(&gameUpdateResponse{Collection: coll, Game: game})
+}
+
+func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseMultipartForm(512 << 20); err != nil {
+		http.Error(w, fmt.Sprintf("parse form failed: %v", err), http.StatusBadRequest)
+		return
+	}
+	metadataPath, err := c.resolveMetadataPath(r.FormValue("metadata_path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	xIndexID, err := strconv.Atoi(strings.TrimSpace(r.FormValue("x_index_id")))
+	if err != nil {
+		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "missing file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	if header == nil || header.Filename == "" {
+		http.Error(w, "invalid file", http.StatusBadRequest)
+		return
+	}
+	if xIndexID <= 0 {
+		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
+		return
+	}
+	relPath, err := storeGameMedia(metadataPath, xIndexID, header.Filename, file)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("store media failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if err := c.reloadCollections(r.Context()); err != nil {
+		http.Error(w, fmt.Sprintf("reload collections failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	coll, game := c.findGamePayload(filepath.ToSlash(metadataPath), xIndexID)
+	if coll == nil || game == nil {
+		http.Error(w, "updated game not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(&gameUpdateResponse{Collection: coll, Game: game, FilePath: relPath})
+}
+
+func (c *WebCommand) collectionsSnapshot() []*collectionPayload {
+	c.dataMu.RLock()
+	defer c.dataMu.RUnlock()
+	return append([]*collectionPayload(nil), c.collections...)
+}
+
+func (c *WebCommand) setCollections(cols []*collectionPayload) {
+	c.dataMu.Lock()
+	defer c.dataMu.Unlock()
+	c.collections = cols
+}
+
+func (c *WebCommand) reloadCollections(ctx context.Context) error {
+	cols, err := loadCollections(ctx, c.root, c.assets)
+	if err != nil {
+		return err
+	}
+	c.setCollections(cols)
+	return nil
+}
+
+func (c *WebCommand) findGamePayload(metadataPath string, xIndexID int) (*collectionPayload, *gamePayload) {
+	metadataPath = filepath.ToSlash(metadataPath)
+	c.dataMu.RLock()
+	defer c.dataMu.RUnlock()
+	for _, coll := range c.collections {
+		if coll == nil {
+			continue
+		}
+		if filepath.ToSlash(coll.MetadataPath) != metadataPath {
+			continue
+		}
+		for _, game := range coll.Games {
+			if game != nil && game.XIndexID == xIndexID {
+				return coll, game
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (c *WebCommand) resolveMetadataPath(meta string) (string, error) {
+	meta = strings.TrimSpace(meta)
+	if meta == "" {
+		return "", errors.New("metadata_path is required")
+	}
+	fsPath := filepath.Clean(filepath.FromSlash(meta))
+	if !c.assets.contains(fsPath) {
+		return "", fmt.Errorf("metadata path %s outside root %s", fsPath, c.root)
+	}
+	info, err := os.Stat(fsPath)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory", fsPath)
+	}
+	return fsPath, nil
 }
 
 func loadCollections(ctx context.Context, root string, store *assetStore) ([]*collectionPayload, error) {
@@ -204,6 +376,18 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 			logger.Error("parse metadata failed", zap.String("path", path), zap.Error(err))
 			return nil
 		}
+		changed, err := ensureGameIndexes(doc)
+		if err != nil {
+			logger.Error("ensure game indexes failed", zap.String("path", path), zap.Error(err))
+			return nil
+		}
+		if changed {
+			if err := metadata.WriteMetadataFile(path, doc); err != nil {
+				logger.Error("write metadata failed", zap.String("path", path), zap.Error(err))
+				return nil
+			}
+			logger.Info("metadata updated with x-index-id", zap.String("path", path))
+		}
 		colls, err := buildCollections(doc, path, root, store, logger)
 		if err != nil {
 			logger.Error("build collection view failed", zap.String("path", path), zap.Error(err))
@@ -218,16 +402,98 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 	sort.Slice(result, func(i, j int) bool {
 		return strings.Compare(result[i].DisplayName, result[j].DisplayName) < 0
 	})
-	for idx, coll := range result {
-		coll.ID = fmt.Sprintf("collection-%d", idx+1)
+	for _, coll := range result {
+		coll.ID = buildCollectionID(coll.MetadataPath, coll.Index)
 		sort.Slice(coll.Games, func(i, j int) bool {
 			return strings.Compare(coll.Games[i].DisplayName, coll.Games[j].DisplayName) < 0
 		})
-		for gidx, game := range coll.Games {
-			game.ID = fmt.Sprintf("%s-game-%d", coll.ID, gidx+1)
+		for _, game := range coll.Games {
+			game.ID = buildGameID(coll.ID, game.Index)
 		}
 	}
 	return result, nil
+}
+
+func ensureGameIndexes(doc *metadata.Document) (bool, error) {
+	if doc == nil {
+		return false, nil
+	}
+	used := make(map[int]struct{})
+	maxID := 0
+	changed := false
+	for _, blk := range doc.Blocks {
+		if blk == nil || blk.Kind != metadata.KindGame {
+			continue
+		}
+		entry := blk.Entry(gameIndexEntryKey)
+		id, ok := parseXIndexEntry(entry)
+		if ok {
+			if id > maxID {
+				maxID = id
+			}
+			if _, exists := used[id]; exists {
+				ok = false
+			} else {
+				used[id] = struct{}{}
+				normalized := strconv.Itoa(id)
+				if len(entry.Values) == 0 || entry.Values[0] != normalized || !entry.Inline {
+					entry.Values = []string{normalized}
+					entry.Inline = true
+					changed = true
+				}
+			}
+		}
+		if !ok {
+			maxID++
+			setBlockXIndexID(blk, maxID)
+			used[maxID] = struct{}{}
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+func setBlockXIndexID(blk *metadata.Block, id int) {
+	if blk == nil {
+		return
+	}
+	value := strconv.Itoa(id)
+	entry := blk.Entry(gameIndexEntryKey)
+	if entry != nil {
+		entry.Values = []string{value}
+		entry.Inline = true
+		return
+	}
+	newEntry := &metadata.Entry{
+		Key:    gameIndexEntryKey,
+		Values: []string{value},
+		Inline: true,
+	}
+	blk.Entries = append(blk.Entries, newEntry)
+}
+
+func parseXIndexEntry(entry *metadata.Entry) (int, bool) {
+	if entry == nil || len(entry.Values) == 0 {
+		return 0, false
+	}
+	value := strings.TrimSpace(entry.Values[0])
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func blockXIndexID(blk *metadata.Block) int {
+	if blk == nil {
+		return 0
+	}
+	if entry := blk.Entry(gameIndexEntryKey); entry != nil {
+		if id, ok := parseXIndexEntry(entry); ok {
+			return id
+		}
+	}
+	return 0
 }
 
 func buildCollections(doc *metadata.Document, metadataPath, root string, store *assetStore, logger *zap.Logger) ([]*collectionPayload, error) {
@@ -244,6 +510,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 	typedGames, _ := doc.Games()
 	collIdx := 0
 	gameIdx := 0
+	collectionOrder := -1
 	var current *collectionPayload
 	var result []*collectionPayload
 
@@ -253,6 +520,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 		}
 		switch blk.Kind {
 		case metadata.KindCollection:
+			collectionOrder++
 			var typed metadata.Collection
 			if collIdx < len(typedCollections) {
 				typed = typedCollections[collIdx]
@@ -268,6 +536,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				name = dirName
 			}
 			current = &collectionPayload{
+				Index:        collectionOrder,
 				Name:         name,
 				DirName:      dirName,
 				DisplayName:  fmt.Sprintf("%s(%s)", name, dirName),
@@ -279,6 +548,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 			if current == nil {
 				continue
 			}
+			gameIndex := len(current.Games)
 			var typed metadata.Game
 			if gameIdx < len(typedGames) {
 				typed = typedGames[gameIdx]
@@ -302,6 +572,8 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 			romBase := deriveRomBase(typed.Files)
 			assets := collectGameAssets(metadataDir, typed, romBase, store, logger)
 			game := &gamePayload{
+				Index:       gameIndex,
+				XIndexID:    blockXIndexID(blk),
 				Title:       title,
 				RomPath:     romPath,
 				DisplayName: display,
@@ -328,6 +600,217 @@ func convertBlockFields(blk *metadata.Block) []*fieldPayload {
 		out = append(out, &fieldPayload{Key: entry.Key, Values: cp})
 	}
 	return out
+}
+
+func updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload) error {
+	doc, err := metadata.ParseMetadataFile(metadataPath)
+	if err != nil {
+		return err
+	}
+	block, err := findGameBlockByIndexID(doc, xIndexID)
+	if err != nil {
+		return err
+	}
+	order, updates, err := combineFieldValues(fields)
+	if err != nil {
+		return err
+	}
+	entries, err := rebuildBlockEntries(block.Entries, order, updates)
+	if err != nil {
+		return err
+	}
+	block.Entries = entries
+	return metadata.WriteMetadataFile(metadataPath, doc)
+}
+
+func findGameBlockByIndexID(doc *metadata.Document, xIndexID int) (*metadata.Block, error) {
+	if doc == nil {
+		return nil, errors.New("metadata document is empty")
+	}
+	for _, blk := range doc.Blocks {
+		if blk == nil || blk.Kind != metadata.KindGame {
+			continue
+		}
+		if blockXIndexID(blk) == xIndexID {
+			return blk, nil
+		}
+	}
+	return nil, fmt.Errorf("game with x-index-id %d not found", xIndexID)
+}
+
+func combineFieldValues(fields []*fieldPayload) ([]string, map[string][]string, error) {
+	order := make([]string, 0, len(fields))
+	values := make(map[string][]string)
+	hasGame := false
+	for _, field := range fields {
+		if field == nil {
+			continue
+		}
+		rawKey := strings.TrimSpace(field.Key)
+		if rawKey == "" {
+			return nil, nil, fmt.Errorf("field key cannot be empty")
+		}
+		key := strings.ToLower(rawKey)
+		normalized := normalizeFieldValues(field.Values)
+		if len(normalized) == 0 {
+			continue
+		}
+		if _, exists := values[key]; !exists {
+			order = append(order, key)
+		}
+		values[key] = append(values[key], normalized...)
+		if key == "game" {
+			hasGame = true
+		}
+	}
+	if !hasGame {
+		return nil, nil, errors.New("game entry is required")
+	}
+	return order, values, nil
+}
+
+func rebuildBlockEntries(original []*metadata.Entry, order []string, updates map[string][]string) ([]*metadata.Entry, error) {
+	entries := make([]*metadata.Entry, 0, len(original)+len(updates))
+	used := make(map[string]bool)
+	for _, entry := range original {
+		if entry == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(entry.Key))
+		if vals, ok := updates[key]; ok {
+			entry.Values = append([]string{}, vals...)
+			entry.Inline = len(entry.Values) == 1
+			entries = append(entries, entry)
+			used[key] = true
+			continue
+		}
+		if key == "game" {
+			return nil, errors.New("game entry is required")
+		}
+		// field removed
+	}
+	for _, key := range order {
+		if used[key] {
+			continue
+		}
+		vals := updates[key]
+		if len(vals) == 0 {
+			continue
+		}
+		entries = append(entries, &metadata.Entry{
+			Key:    key,
+			Values: append([]string{}, vals...),
+			Inline: len(vals) == 1,
+		})
+	}
+	gameIdx := -1
+	for idx, entry := range entries {
+		if entry != nil && entry.Key == "game" {
+			gameIdx = idx
+			break
+		}
+	}
+	if gameIdx == -1 {
+		return nil, errors.New("game entry is required")
+	}
+	if gameIdx != 0 {
+		entries[0], entries[gameIdx] = entries[gameIdx], entries[0]
+	}
+	return entries, nil
+}
+
+func normalizeFieldValues(values []string) []string {
+	var out []string
+	for _, value := range values {
+		trimmed := strings.TrimRight(value, "\r")
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func storeGameMedia(metadataPath string, xIndexID int, filename string, source multipart.File) (string, error) {
+	doc, err := metadata.ParseMetadataFile(metadataPath)
+	if err != nil {
+		return "", err
+	}
+	block, err := findGameBlockByIndexID(doc, xIndexID)
+	if err != nil {
+		return "", err
+	}
+	romBase := deriveRomBase(extractBlockFiles(block))
+	if romBase == "" {
+		romBase = sanitizeFileComponent(getBlockTitle(block))
+	}
+	mediaDir := filepath.Join(filepath.Dir(metadataPath), "media")
+	if romBase != "" {
+		mediaDir = filepath.Join(mediaDir, romBase)
+	}
+	if err := os.MkdirAll(mediaDir, 0o755); err != nil {
+		return "", err
+	}
+	name := sanitizeFileComponent(filename)
+	if name == "" {
+		return "", errors.New("invalid filename")
+	}
+	destPath := filepath.Join(mediaDir, name)
+	out, err := os.Create(destPath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, source); err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(filepath.Dir(metadataPath), destPath)
+	if err != nil {
+		rel = destPath
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func extractBlockFiles(blk *metadata.Block) []string {
+	var files []string
+	if blk == nil {
+		return files
+	}
+	for _, entry := range blk.Entries {
+		if entry == nil {
+			continue
+		}
+		switch entry.Key {
+		case "file", "files":
+			files = append(files, entry.Values...)
+		}
+	}
+	return files
+}
+
+func getBlockTitle(blk *metadata.Block) string {
+	if blk == nil {
+		return ""
+	}
+	if entry := blk.Entry("game"); entry != nil && len(entry.Values) > 0 {
+		return entry.Values[0]
+	}
+	return ""
+}
+
+func sanitizeFileComponent(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.ReplaceAll(name, "\\", "_")
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, ":", "_")
+	name = strings.ReplaceAll(name, "\n", "_")
+	name = strings.ReplaceAll(name, "\t", "_")
+	name = strings.Trim(name, ". ")
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	return name
 }
 
 func resolveRomPath(baseDir string, files []string) string {
@@ -486,6 +969,16 @@ func (s *assetStore) contains(path string) bool {
 	}
 	prefix := s.root + string(os.PathSeparator)
 	return strings.HasPrefix(path, prefix)
+}
+
+func buildCollectionID(metadataPath string, idx int) string {
+	base := fmt.Sprintf("%s#%d", metadataPath, idx)
+	sum := sha1.Sum([]byte(base))
+	return "collection-" + hex.EncodeToString(sum[:6])
+}
+
+func buildGameID(collectionID string, idx int) string {
+	return fmt.Sprintf("%s-game-%d", collectionID, idx)
 }
 
 func init() {
