@@ -149,8 +149,15 @@
     collectionEmpty.style.display = "none";
     collections.forEach((collection) => {
       const item = document.createElement("li");
-      item.textContent = collection.display_name || collection.name;
-      item.className = "list-item";
+      item.className = "list-item list-item-multiline";
+      const nameLine = document.createElement("div");
+      nameLine.className = "collection-name-line";
+      nameLine.textContent = collection.display_name || collection.name;
+      const pathLine = document.createElement("div");
+      pathLine.className = "collection-path-line";
+      pathLine.textContent = collection.relative_path || collection.dir_name || "";
+      item.appendChild(nameLine);
+      item.appendChild(pathLine);
       if (collection.id === currentCollectionId) {
         item.classList.add("active");
       }
