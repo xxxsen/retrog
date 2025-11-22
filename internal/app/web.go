@@ -57,6 +57,7 @@ type gamePayload struct {
 	Title       string          `json:"title"`
 	RomPath     string          `json:"rom_path"`
 	DisplayName string          `json:"display_name"`
+	SortKey     string          `json:"sort_key"`
 	Fields      []*fieldPayload `json:"fields"`
 	Assets      []*assetPayload `json:"assets"`
 }
@@ -524,7 +525,7 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 	for _, coll := range result {
 		coll.ID = buildCollectionID(coll.MetadataPath, coll.Index)
 		sort.Slice(coll.Games, func(i, j int) bool {
-			return strings.Compare(coll.Games[i].DisplayName, coll.Games[j].DisplayName) < 0
+			return compareGameSortKey(coll.Games[i], coll.Games[j])
 		})
 		for _, game := range coll.Games {
 			game.ID = buildGameID(coll.ID, game.Index)
@@ -698,6 +699,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				Title:       title,
 				RomPath:     romPath,
 				DisplayName: display,
+				SortKey:     strings.TrimSpace(typed.SortBy),
 				Fields:      fields,
 				Assets:      assets,
 			}
@@ -820,6 +822,33 @@ func containsExtension(list []string, ext string) bool {
 		}
 	}
 	return false
+}
+
+func compareGameSortKey(a, b *gamePayload) bool {
+	keyA := normalizeSortKey(a)
+	keyB := normalizeSortKey(b)
+	if keyA == keyB {
+		return strings.Compare(a.DisplayName, b.DisplayName) < 0
+	}
+	return keyA < keyB
+}
+
+func normalizeSortKey(game *gamePayload) string {
+	if game == nil {
+		return ""
+	}
+	if game.SortKey != "" {
+		return strings.ToLower(game.SortKey)
+	}
+	for _, field := range game.Fields {
+		if field == nil {
+			continue
+		}
+		if field.Key == "sort-by" && len(field.Values) > 0 {
+			return strings.ToLower(field.Values[0])
+		}
+	}
+	return strings.ToLower(game.DisplayName)
 }
 
 func (c *WebCommand) updateGameMetadata(metadataPath string, xIndexID int, fields []*fieldPayload, removed []*fieldPayload) error {
