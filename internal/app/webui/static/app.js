@@ -655,17 +655,27 @@
 
   function populateEditFields(game) {
     editFields.innerHTML = "";
+    const multipleFileValues =
+      Array.isArray(game?.fields) &&
+      game.fields
+        .filter((field) => {
+          const lower = (field.key || "").toLowerCase();
+          return lower === "file" || lower === "files";
+        })
+        .some((field) => field.values && field.values.length > 1);
     const fallback = { key: "game", values: [game && game.title ? game.title : ""] };
     const fields = game && Array.isArray(game.fields) && game.fields.length ? game.fields : [fallback];
     fields.forEach((field) => {
       const keyLower = (field.key || "").toLowerCase();
       const isIndexField = keyLower === INDEX_FIELD_KEY;
+      const isFileField = keyLower === "file" || keyLower === "files";
+      const shouldLock = isIndexField || (isFileField && multipleFileValues);
       editFields.appendChild(
         createEditableFieldRow(field, {
           isNew: false,
           sourceGame: game,
-          locked: isIndexField,
-          allowRemove: !isIndexField,
+          locked: shouldLock,
+          allowRemove: !shouldLock,
         }),
       );
     });
