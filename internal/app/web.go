@@ -1164,10 +1164,29 @@ func trimAndFilter(values []string) []string {
 	return out
 }
 
+func firstFileValueFromFields(fields []*fieldPayload) string {
+	for _, field := range fields {
+		if field == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(field.Key))
+		if key != "file" && key != "files" {
+			continue
+		}
+		for _, value := range field.Values {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
 func (c *WebCommand) materializeStagedFields(metadataPath string, doc *metadata.Document, block *metadata.Block, fields []*fieldPayload) ([]*fieldPayload, error) {
 	if c == nil || c.uploadDir == "" {
 		return fields, nil
 	}
+	pendingFile := firstFileValueFromFields(fields)
 	for _, field := range fields {
 		if field == nil {
 			continue
@@ -1177,7 +1196,7 @@ func (c *WebCommand) materializeStagedFields(metadataPath string, doc *metadata.
 			if !strings.HasPrefix(value, stagedUploadPrefix) {
 				continue
 			}
-			rel, err := c.finalizeStagedFile(metadataPath, doc, block, key, value)
+			rel, err := c.finalizeStagedFile(metadataPath, doc, block, key, value, pendingFile)
 			if err != nil {
 				return nil, err
 			}
@@ -1256,7 +1275,7 @@ func (c *WebCommand) deleteFieldFile(metadataPath string, doc *metadata.Document
 	}
 }
 
-func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Document, block *metadata.Block, key, token string) (string, error) {
+func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Document, block *metadata.Block, key, token, pendingFile string) (string, error) {
 	if c.uploadDir == "" {
 		return "", errors.New("upload directory not initialized")
 	}
@@ -1270,7 +1289,7 @@ func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Docum
 	}
 	switch {
 	case strings.HasPrefix(key, "assets."):
-		return moveFileToMedia(metadataPath, block, source, stagedName)
+		return moveFileToMedia(metadataPath, block, pendingFile, source, stagedName)
 	case key == "file" || key == "files":
 		allowed := allowedExtensionsForGame(doc, block)
 		return moveFileToRom(metadataPath, source, stagedName, allowed)
@@ -1292,9 +1311,12 @@ func normalizeFieldValues(values []string) []string {
 	return out
 }
 
-func moveFileToMedia(metadataPath string, block *metadata.Block, sourcePath, stagedName string) (string, error) {
+func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile string, sourcePath, stagedName string) (string, error) {
 	metadataDir := filepath.Dir(metadataPath)
 	romBase := deriveRomBase(extractBlockFiles(block))
+	if romBase == "" {
+		romBase = deriveRomBaseFromValue(pendingFile)
+	}
 	if romBase == "" {
 		romBase = sanitizeFileComponent(getBlockTitle(block))
 	}
@@ -1360,6 +1382,28 @@ func copyFileContents(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func deriveRomBaseFromValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(value, stagedUploadPrefix) {
+		value = filepath.Base(strings.TrimPrefix(value, stagedUploadPrefix))
+	}
+	normalized := strings.ReplaceAll(value, "\\", "/")
+	base := path.Base(normalized)
+	ext := path.Ext(base)
+	base = strings.TrimSuffix(base, ext)
+	if idx := strings.Index(base, "__"); idx >= 0 {
+		start := idx + 2
+		if start > len(base) {
+			start = len(base)
+		}
+		base = base[start:]
+	}
+	return sanitizeFileComponent(base)
 }
 
 func extractBlockFiles(blk *metadata.Block) []string {
