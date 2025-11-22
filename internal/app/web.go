@@ -57,6 +57,7 @@ type gamePayload struct {
 	XIndexID    int             `json:"x_index_id"`
 	Title       string          `json:"title"`
 	RomPath     string          `json:"rom_path"`
+	RelRomPath  string          `json:"rel_rom_path"`
 	DisplayName string          `json:"display_name"`
 	SortKey     string          `json:"sort_key"`
 	HasBoxArt   bool            `json:"has_boxart"`
@@ -690,6 +691,10 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 			if romPath == "" && len(typed.Files) > 0 {
 				romPath = filepath.ToSlash(strings.TrimSpace(typed.Files[0]))
 			}
+			relRomPath := romPath
+			if rel, err := filepath.Rel(root, filepath.FromSlash(romPath)); err == nil {
+				relRomPath = filepath.ToSlash(rel)
+			}
 			display := title
 			if romPath != "" {
 				display = fmt.Sprintf("%s (%s)", title, romPath)
@@ -707,6 +712,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				XIndexID:    blockXIndexID(blk),
 				Title:       title,
 				RomPath:     romPath,
+				RelRomPath:  relRomPath,
 				DisplayName: display,
 				SortKey:     strings.TrimSpace(typed.SortBy),
 				HasBoxArt:   hasBoxArt,

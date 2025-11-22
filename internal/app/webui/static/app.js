@@ -270,7 +270,7 @@
       nameLine.textContent = buildNameLine(prefix, buildNameText(game));
       const pathLine = document.createElement("div");
       pathLine.className = "game-path-line";
-      pathLine.textContent = normalizeRomPath(game.rom_path);
+      pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
       item.appendChild(nameLine);
       item.appendChild(pathLine);
       if (game.id === currentGameId) {
@@ -321,7 +321,7 @@
       nameLine.textContent = buildNameLine(prefix, buildNameText(game));
       const pathLine = document.createElement("div");
       pathLine.className = "game-path-line";
-      pathLine.textContent = normalizeRomPath(game.rom_path);
+      pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
       item.appendChild(nameLine);
       item.appendChild(pathLine);
       if (game.id === currentGameId) {
