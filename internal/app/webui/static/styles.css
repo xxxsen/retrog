@@ -160,6 +160,7 @@ section {
   display: flex;
   gap: 8px;
   align-items: center;
+  justify-content: flex-end;
 }
 .panel-actions button {
   flex: 0 0 auto;
