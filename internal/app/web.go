@@ -1539,7 +1539,7 @@ func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Docum
 	}
 	switch {
 	case strings.HasPrefix(key, "assets."):
-		return moveFileToMedia(metadataPath, block, pendingFile, source, stagedName)
+		return moveFileToMedia(metadataPath, block, pendingFile, source, stagedName, key)
 	case key == "file" || key == "files":
 		allowed := allowedExtensionsForGame(doc, block)
 		return moveFileToRom(metadataPath, source, stagedName, allowed)
@@ -1561,7 +1561,7 @@ func normalizeFieldValues(values []string) []string {
 	return out
 }
 
-func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile string, sourcePath, stagedName string) (string, error) {
+func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile string, sourcePath, stagedName, assetKey string) (string, error) {
 	metadataDir := filepath.Dir(metadataPath)
 	romBase := deriveRomBase(extractBlockFiles(block))
 	if romBase == "" {
@@ -1574,15 +1574,16 @@ func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile str
 	if romBase != "" {
 		mediaDir = filepath.Join(mediaDir, romBase)
 	}
-	return moveFileToDir(metadataDir, mediaDir, sourcePath, stagedName, nil)
+	targetBase := assetFileBaseFromKey(assetKey)
+	return moveFileToDir(metadataDir, mediaDir, sourcePath, stagedName, nil, targetBase)
 }
 
 func moveFileToRom(metadataPath string, sourcePath, stagedName string, allowedExt []string) (string, error) {
 	metadataDir := filepath.Dir(metadataPath)
-	return moveFileToDir(metadataDir, metadataDir, sourcePath, stagedName, allowedExt)
+	return moveFileToDir(metadataDir, metadataDir, sourcePath, stagedName, allowedExt, "")
 }
 
-func moveFileToDir(metadataDir, targetDir, sourcePath, stagedName string, allowedExt []string) (string, error) {
+func moveFileToDir(metadataDir, targetDir, sourcePath, stagedName string, allowedExt []string, preferredBase string) (string, error) {
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return "", err
 	}
@@ -1592,6 +1593,13 @@ func moveFileToDir(metadataDir, targetDir, sourcePath, stagedName string, allowe
 	}
 	if baseName == "" {
 		baseName = filepath.Base(sourcePath)
+	}
+	if preferredBase != "" {
+		ext := filepath.Ext(baseName)
+		base := sanitizeFileComponent(preferredBase)
+		if base != "" {
+			baseName = base + ext
+		}
 	}
 	if len(allowedExt) > 0 {
 		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(baseName)), ".")
@@ -1956,6 +1964,42 @@ func buildCollectionID(metadataPath string, idx int) string {
 
 func buildGameID(collectionID string, idx int) string {
 	return fmt.Sprintf("%s-game-%d", collectionID, idx)
+}
+
+func assetFileBaseFromKey(key string) string {
+	key = strings.TrimSpace(strings.ToLower(key))
+	if !strings.HasPrefix(key, "assets.") {
+		return ""
+	}
+	name := strings.TrimPrefix(key, "assets.")
+	switch name {
+	case "boxfront":
+		return "boxFront"
+	case "boxback":
+		return "boxBack"
+	case "boxspine":
+		return "boxSpine"
+	case "boxfull":
+		return "boxFull"
+	case "marquee":
+		return "marquee"
+	case "bezel":
+		return "bezel"
+	case "logo":
+		return "logo"
+	case "screenshot":
+		return "screenshot"
+	case "video":
+		return "video"
+	case "cartridge":
+		return "cartridge"
+	case "disc":
+		return "disc"
+	case "cart":
+		return "cart"
+	default:
+		return sanitizeFileComponent(name)
+	}
 }
 
 func init() {

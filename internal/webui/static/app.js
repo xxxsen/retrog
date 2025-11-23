@@ -75,16 +75,17 @@
     "command",
     "workdir",
     "cwd",
-    "assets.boxart",
     "assets.boxfront",
     "assets.boxback",
+    "assets.boxspine",
+    "assets.boxfull",
+    "assets.cartridge",
+    "assets.disc",
+    "assets.cart",
     "assets.logo",
-    "assets.banner",
-    "assets.poster",
-    "assets.clearlogo",
     "assets.marquee",
+    "assets.bezel",
     "assets.screenshot",
-    "assets.background",
     "assets.video",
   ];
   const rowState = new WeakMap();
@@ -544,7 +545,7 @@
     }
     const boxField = findFieldInPayload(fields, "assets.boxfront");
     if (!hasNonEmptyValue(boxField)) {
-      return "assets.boxFront 字段不能为空";
+      return "assets.boxfront 字段不能为空";
     }
     return "";
   }
@@ -553,7 +554,7 @@
     if (!Array.isArray(fields)) {
       return null;
     }
-    const lower = key.toLowerCase();
+    const lower = (key || "").toLowerCase();
     return (
       fields.find((field) => field && typeof field.key === "string" && field.key.toLowerCase() === lower) ||
       null
@@ -675,8 +676,8 @@
     const normalized = rawKey.toLowerCase();
     row.dataset.key = normalized;
     if (state.keyDisplay) {
-      state.keyDisplay.textContent = rawKey || "(未选择)";
-      state.keyDisplay.title = rawKey;
+      state.keyDisplay.textContent = normalized || "(未选择)";
+      state.keyDisplay.title = normalized;
     }
     if (state.keySelect && state.keySelect.value !== rawKey) {
       state.keySelect.value = rawKey;
@@ -857,7 +858,7 @@
       row.className = "field-row";
       const key = document.createElement("div");
       key.className = "field-key";
-      key.textContent = field.key;
+      key.textContent = (field.key || "").toLowerCase();
       const value = document.createElement("div");
       value.className = "field-value";
       value.textContent = (field.values || []).join("\n");
@@ -1129,7 +1130,9 @@
         return;
       }
       const keySelect = state.keySelect;
-      const key = keySelect ? keySelect.value.trim().toLowerCase() : (row.dataset.key || "").trim();
+      const key = keySelect
+        ? (keySelect.value || "").trim().toLowerCase()
+        : (row.dataset.key || "").trim().toLowerCase();
       const rawValues = valueArea.value.replace(/\r/g, "").split("\n");
       const values = rawValues.map((v) => v.trim()).filter((v) => v.length);
       if (key) {

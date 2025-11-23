@@ -41,7 +41,32 @@ type Entry struct {
 }
 
 var defaultFieldMapping = map[string]string{
-	"assets.box_front": "assets.boxfront",
+	"assets.box_front":     "assets.boxfront",
+	"assets.boxfront":      "assets.boxfront",
+	"assets.boxart":        "assets.boxfront",
+	"assets.boxart2d":      "assets.boxfront",
+	"assets.boxback":       "assets.boxback",
+	"assets.box_back":      "assets.boxback",
+	"assets.boxspine":      "assets.boxspine",
+	"assets.box_spine":     "assets.boxspine",
+	"assets.boxside":       "assets.boxspine",
+	"assets.box_side":      "assets.boxspine",
+	"assets.boxfull":       "assets.boxfull",
+	"assets.box_full":      "assets.boxfull",
+	"assets.box":           "assets.boxfull",
+	"assets.cartridge":     "assets.cartridge",
+	"assets.disc":          "assets.disc",
+	"assets.cart":          "assets.cart",
+	"assets.logo":          "assets.logo",
+	"assets.wheel":         "assets.logo",
+	"assets.marquee":       "assets.marquee",
+	"assets.bezel":         "assets.bezel",
+	"assets.screenmarquee": "assets.bezel",
+	"assets.border":        "assets.bezel",
+	"assets.screenshot":    "assets.screenshot",
+	"assets.screenshots":   "assets.screenshot",
+	"assets.video":         "assets.video",
+	"assets.videos":        "assets.video",
 }
 
 // Collection contains the parsed friendly view of a collection block.
