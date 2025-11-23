@@ -12,6 +12,7 @@
   const searchCollection = document.getElementById("search-collection");
   const searchClear = document.getElementById("search-clear");
   const addGameButton = document.getElementById("add-game");
+  const toggleMissingButton = document.getElementById("toggle-missing-games");
   const editButton = document.getElementById("edit-game");
   const deleteButton = document.getElementById("delete-game");
   const deleteModal = document.getElementById("delete-modal");
@@ -95,6 +96,7 @@
   let collections = [];
   let currentCollectionId = null;
   let currentGameId = null;
+  let showMissingGames = false;
   let searchQuery = "";
   let searchCollectionId = "";
 
@@ -108,6 +110,7 @@
       buildCollectionExtensionMap();
       populateCollectionFilterOptions();
       renderCollections();
+      updateMissingToggleButton();
     } catch (err) {
       collectionEmpty.textContent = `加载合集失败: ${err.message}`;
       collectionEmpty.style.display = "block";
@@ -137,6 +140,20 @@
       return [];
     }
     return collectionExtensions.get(collectionId) || [];
+  }
+
+  function getCollectionCounts(collection) {
+    const totalFallback = Array.isArray(collection?.games) ? collection.games.length : 0;
+    const total = Number.isFinite(Number(collection?.total_games))
+      ? Number(collection.total_games)
+      : totalFallback;
+    const availableFallback = Array.isArray(collection?.games)
+      ? collection.games.filter((game) => !isMissingGame(game)).length
+      : 0;
+    const available = Number.isFinite(Number(collection?.available_games))
+      ? Number(collection.available_games)
+      : availableFallback;
+    return { available, total };
   }
 
   function getNextXIndex(collection) {
@@ -191,6 +208,7 @@
     collectionList.innerHTML = "";
     if (!collections.length) {
       collectionEmpty.style.display = "block";
+      updateActionButtons();
       return;
     }
     if (!currentCollectionId || !collections.some((c) => c.id === currentCollectionId)) {
@@ -202,10 +220,10 @@
       item.className = "list-item list-item-multiline";
       const nameLine = document.createElement("div");
       nameLine.className = "collection-name-line";
-      const count = Array.isArray(collection.games) ? collection.games.length : 0;
+      const counts = getCollectionCounts(collection);
       const countBadge = document.createElement("span");
       countBadge.className = "collection-count";
-      countBadge.textContent = count;
+      countBadge.textContent = `${counts.available}/${counts.total}`;
       const nameText = document.createElement("span");
       nameText.textContent = collection.name || collection.display_name || "";
       nameLine.appendChild(nameText);
@@ -305,6 +323,10 @@
     };
   }
 
+  function isMissingGame(game) {
+    return Boolean(game && game.rom_missing);
+  }
+
   function isAssetKey(key) {
     return Boolean(key) && key.toLowerCase().startsWith("assets.");
   }
@@ -325,6 +347,13 @@
     return key.toLowerCase().replace(/^assets\./, "");
   }
 
+  function shouldDisplayGame(game) {
+    if (!game) {
+      return false;
+    }
+    return showMissingGames || !isMissingGame(game);
+  }
+
   function renderGames() {
     gameList.innerHTML = "";
     const query = (searchQuery || "").trim().toLowerCase();
@@ -343,6 +372,7 @@
       currentGameId = null;
       renderFields();
       renderMedia();
+      updateActionButtons();
       return;
     }
     gameEmpty.style.display = "none";
@@ -351,21 +381,7 @@
       currentCollectionId = matches[0].collection.id;
     }
     matches.forEach(({ collection, game }) => {
-      const item = document.createElement("li");
-      item.className = "list-item list-item-multiline";
-      const prefix = buildMediaPrefix(game);
-      const nameLine = document.createElement("div");
-      nameLine.className = "game-name-line";
-      nameLine.textContent = buildNameLine(prefix, buildNameText(game));
-      const pathLine = document.createElement("div");
-      pathLine.className = "game-path-line";
-      pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
-      item.appendChild(nameLine);
-      item.appendChild(pathLine);
-      if (game.id === currentGameId) {
-        item.classList.add("active");
-      }
-      item.addEventListener("click", () => {
+      const item = createGameListItem(game, collection, () => {
         currentGameId = game.id;
         currentCollectionId = collection.id;
         renderGames();
@@ -373,10 +389,14 @@
         renderMedia();
         renderCollections();
       });
+      if (game.id === currentGameId) {
+        item.classList.add("active");
+      }
       gameList.appendChild(item);
     });
     renderFields();
     renderMedia();
+    updateActionButtons();
   }
 
   function renderCollectionGames() {
@@ -387,45 +407,38 @@
       currentGameId = null;
       renderFields();
       renderMedia();
+      updateActionButtons();
       return;
     }
-    if (!coll.games.length) {
-      gameEmpty.textContent = "该合集暂无游戏";
+    const visibleGames = (coll.games || []).filter((game) => shouldDisplayGame(game));
+    if (!visibleGames.length) {
+      gameEmpty.textContent = showMissingGames ? "该合集暂无游戏" : "该合集暂无可用游戏";
       gameEmpty.style.display = "block";
       currentGameId = null;
       renderFields();
       renderMedia();
+      updateActionButtons();
       return;
     }
     gameEmpty.style.display = "none";
-    if (!currentGameId || !coll.games.some((g) => g.id === currentGameId)) {
-      currentGameId = coll.games[0].id;
+    if (!currentGameId || !visibleGames.some((g) => g.id === currentGameId)) {
+      currentGameId = visibleGames[0].id;
     }
-    coll.games.forEach((game) => {
-      const item = document.createElement("li");
-      item.className = "list-item list-item-multiline";
-      const prefix = buildMediaPrefix(game);
-      const nameLine = document.createElement("div");
-      nameLine.className = "game-name-line";
-      nameLine.textContent = buildNameLine(prefix, buildNameText(game));
-      const pathLine = document.createElement("div");
-      pathLine.className = "game-path-line";
-      pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
-      item.appendChild(nameLine);
-      item.appendChild(pathLine);
-      if (game.id === currentGameId) {
-        item.classList.add("active");
-      }
-      item.addEventListener("click", () => {
+    visibleGames.forEach((game) => {
+      const item = createGameListItem(game, coll, () => {
         currentGameId = game.id;
         renderGames();
         renderFields();
         renderMedia();
       });
+      if (game.id === currentGameId) {
+        item.classList.add("active");
+      }
       gameList.appendChild(item);
     });
     renderFields();
     renderMedia();
+    updateActionButtons();
   }
 
   function buildMediaPrefix(game) {
@@ -441,6 +454,39 @@
   function buildNameLine(prefix, nameText) {
     const name = nameText || "";
     return prefix + name;
+  }
+
+  function createGameListItem(game, collection, onSelect) {
+    const item = document.createElement("li");
+    item.className = "list-item list-item-multiline";
+    if (isMissingGame(game)) {
+      item.classList.add("missing-game");
+    }
+    const prefix = buildMediaPrefix(game);
+    const nameLine = document.createElement("div");
+    nameLine.className = "game-name-line";
+    const nameText = document.createElement("span");
+    nameText.className = "game-name-left";
+    nameText.textContent = buildNameLine(prefix, buildNameText(game));
+    nameLine.appendChild(nameText);
+    if (isMissingGame(game)) {
+      const missingFlag = document.createElement("span");
+      missingFlag.className = "game-missing-flag";
+      missingFlag.textContent = "⛔";
+      nameLine.appendChild(missingFlag);
+    }
+    const pathLine = document.createElement("div");
+    pathLine.className = "game-path-line";
+    pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
+    if (isMissingGame(game)) {
+      pathLine.classList.add("missing-path");
+    }
+    item.appendChild(nameLine);
+    item.appendChild(pathLine);
+    if (typeof onSelect === "function") {
+      item.addEventListener("click", onSelect);
+    }
+    return item;
   }
 
   function buildNameText(game) {
@@ -504,7 +550,10 @@
       ? collections.filter((c) => c.id === searchCollectionId)
       : collections;
     scopes.forEach((collection) => {
-      collection.games.forEach((game) => {
+      (collection.games || []).forEach((game) => {
+        if (!shouldDisplayGame(game)) {
+          return;
+        }
         if (matchesQuery(game, query)) {
           matches.push({ collection, game });
         }
@@ -847,6 +896,10 @@
       setEditStatus("请先选择一个游戏", true);
       return;
     }
+    if (isMissingGame(baseContext.game)) {
+      setEditStatus("该游戏缺少 ROM，无法编辑", true);
+      return;
+    }
     editContext = { ...baseContext };
     removedFields = [];
     populateEditFields(gameOverride || baseContext.game);
@@ -1087,6 +1140,32 @@
     collectionStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
   }
 
+  function updateActionButtons() {
+    const context = getCurrentSelectionContext();
+    const hasSelection = Boolean(context);
+    const isMissing = context ? isMissingGame(context.game) : false;
+    const disableEdit = !hasSelection || isMissing;
+    const disableDelete = !hasSelection || isMissing;
+    if (editButton) {
+      editButton.disabled = disableEdit;
+      editButton.classList.toggle("disabled", disableEdit);
+      editButton.title = isMissing ? "缺失 ROM 的游戏仅支持查看" : "";
+    }
+    if (deleteButton) {
+      deleteButton.disabled = disableDelete;
+      deleteButton.classList.toggle("disabled", disableDelete);
+      deleteButton.title = isMissing ? "缺失 ROM 的游戏仅支持查看" : "";
+    }
+  }
+
+  function updateMissingToggleButton() {
+    if (!toggleMissingButton) {
+      return;
+    }
+    toggleMissingButton.textContent = showMissingGames ? "隐藏缺失" : "显示缺失";
+    toggleMissingButton.classList.toggle("active", showMissingGames);
+  }
+
   function stopVideos(container) {
     if (!container) {
       return;
@@ -1293,6 +1372,20 @@
     });
   }
 
+  if (toggleMissingButton) {
+    toggleMissingButton.addEventListener("click", () => {
+      showMissingGames = !showMissingGames;
+      updateMissingToggleButton();
+      const { game } = findGameWithCollectionById(currentGameId);
+      if (!showMissingGames && isMissingGame(game)) {
+        currentGameId = null;
+      }
+      renderCollections();
+      renderFields();
+      renderMedia();
+    });
+  }
+
   if (editCollectionButton) {
     editCollectionButton.addEventListener("click", () => {
       const collection = getCurrentCollection();
@@ -1399,6 +1492,10 @@
         setEditStatus("请选择需要编辑的游戏", true);
         return;
       }
+      if (isMissingGame(context.game)) {
+        setEditStatus("缺失 ROM 的游戏仅支持查看，无法编辑", true);
+        return;
+      }
       openEditModal(context.game, { ...context, isNew: false });
     });
   }
@@ -1407,6 +1504,10 @@
       const context = getCurrentSelectionContext();
       if (!context) {
         setDeleteStatus("请选择需要删除的游戏", true);
+        return;
+      }
+      if (isMissingGame(context.game)) {
+        setDeleteStatus("缺失 ROM 的游戏仅支持查看，无法删除", true);
         return;
       }
       openDeleteModal();

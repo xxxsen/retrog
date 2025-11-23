@@ -179,6 +179,15 @@ section {
   border-color: var(--accent);
   color: var(--accent);
 }
+.ghost.active {
+  border-color: var(--accent);
+  background: #122449;
+}
+.ghost.disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .ghost.danger {
   border-color: #f87171;
   color: #f87171;
@@ -226,11 +235,29 @@ section {
 }
 .game-name-line {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.game-name-left {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.game-missing-flag {
+  flex: 0 0 auto;
+  color: #ffadad;
 }
 .game-path-line {
   font-size: 12px;
   color: var(--text-muted);
   word-break: break-all;
+}
+.game-path-line.missing-path {
+  color: #ffadad;
 }
 .collection-name-line {
   font-weight: 600;
@@ -263,6 +290,12 @@ section {
   font-size: 12px;
   min-width: 28px;
   text-align: right;
+}
+.missing-game .game-name-left {
+  color: #ffadad;
+}
+.missing-game .game-missing-flag {
+  color: #ff6b6b;
 }
 
 .empty-state {

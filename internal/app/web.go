@@ -43,6 +43,8 @@ type collectionPayload struct {
 	ID           string          `json:"id"`
 	Index        int             `json:"index"`
 	XIndexID     int             `json:"x_index_id"`
+	Available    int             `json:"available_games"`
+	Total        int             `json:"total_games"`
 	Name         string          `json:"name"`
 	DirName      string          `json:"dir_name"`
 	DisplayName  string          `json:"display_name"`
@@ -63,6 +65,7 @@ type gamePayload struct {
 	RelRomPath  string          `json:"rel_rom_path"`
 	DisplayName string          `json:"display_name"`
 	SortKey     string          `json:"sort_key"`
+	RomMissing  bool            `json:"rom_missing"`
 	HasBoxArt   bool            `json:"has_boxart"`
 	HasVideo    bool            `json:"has_video"`
 	Fields      []*fieldPayload `json:"fields"`
@@ -857,6 +860,11 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 			if romPath == "" && len(typed.Files) > 0 {
 				romPath = filepath.ToSlash(strings.TrimSpace(typed.Files[0]))
 			}
+			existingRomPath := findExistingRomPath(metadataDir, typed.Files)
+			romMissing := existingRomPath == ""
+			if existingRomPath != "" {
+				romPath = existingRomPath
+			}
 			relRomPath := romPath
 			if rel, err := filepath.Rel(root, filepath.FromSlash(romPath)); err == nil {
 				relRomPath = filepath.ToSlash(rel)
@@ -881,12 +889,17 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				RelRomPath:  relRomPath,
 				DisplayName: display,
 				SortKey:     strings.TrimSpace(typed.SortBy),
+				RomMissing:  romMissing,
 				HasBoxArt:   hasBoxArt,
 				HasVideo:    hasVideo,
 				Fields:      fields,
 				Assets:      assets,
 			}
 			current.Games = append(current.Games, game)
+			current.Total++
+			if !romMissing {
+				current.Available++
+			}
 		}
 	}
 	return result, nil
@@ -1697,6 +1710,27 @@ func resolveRomPath(baseDir string, files []string) string {
 		return filepath.ToSlash(filepath.Clean(joined))
 	}
 	return ""
+}
+
+func findExistingRomPath(baseDir string, files []string) string {
+	for _, file := range files {
+		candidate := resolveRomPath(baseDir, []string{file})
+		if candidate != "" && romFileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func romFileExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.FromSlash(path))
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
 }
 
 func deriveRomBase(files []string) string {
