@@ -849,6 +849,7 @@
 
   function closeEditModal() {
     if (editModal) {
+      stopVideos(editModal);
       editModal.classList.add("hidden");
     }
     removedFields = [];
@@ -1077,6 +1078,20 @@
     }
     collectionStatus.textContent = message || "";
     collectionStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
+  }
+
+  function stopVideos(container) {
+    if (!container) {
+      return;
+    }
+    container.querySelectorAll("video").forEach((video) => {
+      try {
+        video.pause();
+        video.currentTime = 0;
+      } catch (e) {
+        // ignore pause errors
+      }
+    });
   }
 
   function openCollectionModal(collection) {
