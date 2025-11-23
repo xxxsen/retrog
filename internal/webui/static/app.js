@@ -202,7 +202,14 @@
       item.className = "list-item list-item-multiline";
       const nameLine = document.createElement("div");
       nameLine.className = "collection-name-line";
-      nameLine.textContent = collection.name || collection.display_name || "";
+      const count = Array.isArray(collection.games) ? collection.games.length : 0;
+      const countBadge = document.createElement("span");
+      countBadge.className = "collection-count";
+      countBadge.textContent = count;
+      const nameText = document.createElement("span");
+      nameText.textContent = collection.name || collection.display_name || "";
+      nameLine.appendChild(nameText);
+      nameLine.appendChild(countBadge);
       const pathRow = document.createElement("div");
       pathRow.className = "collection-path-row";
       const pathLine = document.createElement("div");

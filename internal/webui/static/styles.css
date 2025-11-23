@@ -234,6 +234,10 @@ section {
 }
 .collection-name-line {
   font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .collection-path-row {
   display: flex;
@@ -250,6 +254,15 @@ section {
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+.collection-count {
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: #1f2833;
+  color: var(--text-muted);
+  font-size: 12px;
+  min-width: 28px;
+  text-align: right;
 }
 
 .empty-state {

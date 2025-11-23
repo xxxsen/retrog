@@ -41,7 +41,7 @@ type Entry struct {
 }
 
 var defaultFieldMapping = map[string]string{
-	"assets.box_front": "assets.boxFront",
+	"assets.box_front": "assets.boxfront",
 }
 
 // Collection contains the parsed friendly view of a collection block.
@@ -373,13 +373,14 @@ func parseGameBlock(blk *Block) Game {
 			game.WorkDir = joinEntryValues(entry)
 		default:
 			if strings.HasPrefix(entry.Key, "assets.") {
-				assetName := strings.TrimPrefix(entry.Key, "assets.")
-				if assetName != "" {
-					if game.Assets == nil {
-						game.Assets = make(map[string]string)
-					}
-					game.Assets[assetName] = joinEntryValues(entry)
+				assetName := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(entry.Key, "assets.")))
+				if assetName == "" {
+					continue
 				}
+				if game.Assets == nil {
+					game.Assets = make(map[string]string)
+				}
+				game.Assets[assetName] = joinEntryValues(entry)
 				continue
 			}
 			if game.Extra == nil {
