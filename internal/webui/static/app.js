@@ -22,6 +22,7 @@
   let deleteStatus = document.getElementById("delete-status");
   const deleteRemoveFiles = document.getElementById("delete-remove-files");
   const editCollectionButton = document.getElementById("edit-collection");
+  const collectionTotalCount = document.getElementById("collection-total-count");
   const collectionModal = document.getElementById("collection-modal");
   const collectionForm = document.getElementById("collection-form");
   const collectionStatus = document.getElementById("collection-status");
@@ -172,6 +173,17 @@
     return { available, total };
   }
 
+  function getGlobalCounts() {
+    let available = 0;
+    let total = 0;
+    collections.forEach((collection) => {
+      const counts = getCollectionCounts(collection);
+      available += counts.available || 0;
+      total += counts.total || 0;
+    });
+    return { available, total };
+  }
+
   function getNextXIndex(collection) {
     if (!collection || !Array.isArray(collection.games) || !collection.games.length) {
       return 1;
@@ -226,6 +238,7 @@
     const visibleCollections = collections.filter((collection) =>
       matchesCollectionSearch(collection, query),
     );
+    updateCollectionTotalCount();
     if (!visibleCollections.length) {
       collectionEmpty.textContent = query ? "没有匹配的合集" : "未在目录中找到 metadata.pegasus.txt";
       collectionEmpty.style.display = "block";
@@ -1190,6 +1203,14 @@
     }
     toggleMissingButton.textContent = showMissingGames ? "隐藏缺失" : "显示缺失";
     toggleMissingButton.classList.toggle("active", showMissingGames);
+  }
+
+  function updateCollectionTotalCount() {
+    if (!collectionTotalCount) {
+      return;
+    }
+    const counts = getGlobalCounts();
+    collectionTotalCount.textContent = counts.total > 0 ? `${counts.available}/${counts.total}` : "";
   }
 
   function stopVideos(container) {

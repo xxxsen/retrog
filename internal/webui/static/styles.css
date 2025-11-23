@@ -163,6 +163,23 @@ section {
   margin: 0;
   font-size: 18px;
 }
+.collection-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.collection-title-text {
+  white-space: nowrap;
+}
+.collection-total-count {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: #1f2833;
+  color: var(--text-muted);
+  margin-left: 0;
+}
 
 .panel-header.with-action {
   flex-direction: row;
