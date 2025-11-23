@@ -53,6 +53,7 @@ rating: 80%
 command: launch "{file.path}"
 cwd: /roms
 assets.boxFront: cover.png
+assets.box_front: alt_cover.png
 assets.logo:
   logo.png
 x-id: custom
@@ -112,7 +113,7 @@ x-id: custom
 		assert.Equal(t, "80%", game.Rating)
 		assert.Equal(t, "launch \"{file.path}\"", game.Launch)
 		assert.Equal(t, "/roms", game.WorkDir)
-		assert.Equal(t, map[string]string{"boxfront": "cover.png", "logo": "logo.png"}, game.Assets)
+		assert.Equal(t, map[string]string{"boxfront": "alt_cover.png", "logo": "logo.png"}, game.Assets)
 		assert.Equal(t, []string{"custom"}, game.Extra["x-id"])
 	}
 }

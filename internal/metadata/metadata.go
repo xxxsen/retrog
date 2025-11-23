@@ -40,6 +40,10 @@ type Entry struct {
 	Inline bool
 }
 
+var defaultFieldMapping = map[string]string{
+	"assets.box_front": "assets.boxFront",
+}
+
 // Collection contains the parsed friendly view of a collection block.
 type Collection struct {
 	Name             string
@@ -138,6 +142,8 @@ func ParseMetadataFile(path string) (*Document, error) {
 		if colon+1 < len(raw) {
 			value = strings.TrimSpace(raw[colon+1:])
 		}
+
+		key = normalizeKey(key)
 
 		switch key {
 		case string(KindCollection):
@@ -421,4 +427,11 @@ func firstRune(s string) rune {
 		return r
 	}
 	return 0
+}
+
+func normalizeKey(in string) string {
+	if v, ok := defaultFieldMapping[in]; ok {
+		return v
+	}
+	return in
 }
