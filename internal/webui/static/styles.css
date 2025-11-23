@@ -45,6 +45,24 @@ body {
   overflow: hidden;
 }
 
+.collection-search {
+  margin-top: 8px;
+}
+
+.collection-search input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #0b121d;
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.collection-search input:focus {
+  outline: 1px solid var(--accent);
+}
+
 .content {
   flex: 1;
   display: flex;

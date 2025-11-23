@@ -34,6 +34,7 @@
   const editCancel = document.getElementById("edit-cancel");
   const editClose = document.getElementById("edit-close");
   const editStatus = document.getElementById("edit-status");
+  const collectionSearchInput = document.getElementById("collection-search-input");
   const INDEX_FIELD_KEY = "x-index-id";
   const COLLECTION_FIELD_CONFIG = [
     { id: "collection-x-index-id", key: "x-index-id", readonly: true },
@@ -96,6 +97,7 @@
   let collections = [];
   let currentCollectionId = null;
   let currentGameId = null;
+  let collectionSearchQuery = "";
   let showMissingGames = false;
   let searchQuery = "";
   let searchCollectionId = "";
@@ -140,6 +142,19 @@
       return [];
     }
     return collectionExtensions.get(collectionId) || [];
+  }
+
+  function matchesCollectionSearch(collection, query) {
+    if (!query) {
+      return true;
+    }
+    const haystacks = [
+      collection?.name,
+      collection?.display_name,
+      collection?.dir_name,
+      collection?.relative_path,
+    ];
+    return haystacks.some((value) => (value || "").toLowerCase().includes(query));
   }
 
   function getCollectionCounts(collection) {
@@ -206,16 +221,24 @@
   function renderCollections() {
     collections.sort(compareCollections);
     collectionList.innerHTML = "";
-    if (!collections.length) {
+    const query = (collectionSearchQuery || "").trim().toLowerCase();
+    const visibleCollections = collections.filter((collection) =>
+      matchesCollectionSearch(collection, query),
+    );
+    if (!visibleCollections.length) {
+      collectionEmpty.textContent = query ? "没有匹配的合集" : "未在目录中找到 metadata.pegasus.txt";
       collectionEmpty.style.display = "block";
+      currentCollectionId = null;
+      currentGameId = null;
       updateActionButtons();
+      renderGames();
       return;
     }
-    if (!currentCollectionId || !collections.some((c) => c.id === currentCollectionId)) {
-      currentCollectionId = collections[0].id;
+    if (!currentCollectionId || !visibleCollections.some((c) => c.id === currentCollectionId)) {
+      currentCollectionId = visibleCollections[0].id;
     }
     collectionEmpty.style.display = "none";
-    collections.forEach((collection) => {
+    visibleCollections.forEach((collection) => {
       const item = document.createElement("li");
       item.className = "list-item list-item-multiline";
       const nameLine = document.createElement("div");
@@ -1342,6 +1365,15 @@
 
   if (searchForm) {
     searchForm.addEventListener("submit", (event) => event.preventDefault());
+  }
+  if (collectionSearchInput) {
+    collectionSearchInput.addEventListener("input", (event) => {
+      collectionSearchQuery = event.target.value || "";
+      renderCollections();
+      renderGames();
+      renderFields();
+      renderMedia();
+    });
   }
   if (searchInput) {
     searchInput.addEventListener("input", (event) => {
