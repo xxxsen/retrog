@@ -1703,10 +1703,11 @@ func resolveRomPath(baseDir string, files []string) string {
 		if trimmed == "" {
 			continue
 		}
-		if filepath.IsAbs(trimmed) {
-			return filepath.ToSlash(filepath.Clean(trimmed))
+		normalized := strings.ReplaceAll(trimmed, "\\", string(os.PathSeparator))
+		if filepath.IsAbs(normalized) {
+			return filepath.ToSlash(filepath.Clean(normalized))
 		}
-		joined := filepath.Join(baseDir, trimmed)
+		joined := filepath.Join(baseDir, normalized)
 		return filepath.ToSlash(filepath.Clean(joined))
 	}
 	return ""
