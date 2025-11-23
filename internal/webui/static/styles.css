@@ -235,10 +235,21 @@ section {
 .collection-name-line {
   font-weight: 600;
 }
+.collection-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .collection-path-line {
   font-size: 12px;
   color: var(--text-muted);
   word-break: break-all;
+  flex: 1;
+}
+.collection-ext-line {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .empty-state {

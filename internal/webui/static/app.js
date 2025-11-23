@@ -203,11 +203,18 @@
       const nameLine = document.createElement("div");
       nameLine.className = "collection-name-line";
       nameLine.textContent = collection.name || collection.display_name || "";
+      const pathRow = document.createElement("div");
+      pathRow.className = "collection-path-row";
       const pathLine = document.createElement("div");
       pathLine.className = "collection-path-line";
       pathLine.textContent = collection.relative_path || collection.dir_name || "";
+      const extLine = document.createElement("div");
+      extLine.className = "collection-ext-line";
+      extLine.textContent = formatExtensions(collection.extensions);
+      pathRow.appendChild(pathLine);
+      pathRow.appendChild(extLine);
       item.appendChild(nameLine);
-      item.appendChild(pathLine);
+      item.appendChild(pathRow);
       if (collection.id === currentCollectionId) {
         item.classList.add("active");
       }
@@ -234,6 +241,15 @@
       collectionList.appendChild(item);
     });
     renderGames();
+  }
+
+  function formatExtensions(exts) {
+    if (!Array.isArray(exts) || !exts.length) {
+      return "";
+    }
+    const display = exts.slice(0, 3).map((ext) => (ext || "").trim()).filter(Boolean);
+    const suffix = exts.length > 3 ? " ..." : "";
+    return display.join(", ") + suffix;
   }
 
   function compareCollections(a, b) {
