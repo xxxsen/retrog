@@ -1726,11 +1726,11 @@ func romFileExists(path string) bool {
 	if strings.TrimSpace(path) == "" {
 		return false
 	}
-	info, err := os.Stat(filepath.FromSlash(path))
+	_, err := os.Stat(filepath.FromSlash(path))
 	if err != nil {
 		return false
 	}
-	return !info.IsDir()
+	return true
 }
 
 func deriveRomBase(files []string) string {

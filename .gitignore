@@ -4,3 +4,4 @@ metadata.pegasus.txt
 meta.json
 /gamelist-sample
 *.log
+__debug_bin*
