@@ -1736,10 +1736,7 @@ func romFileExists(path string) bool {
 		return false
 	}
 	_, err := os.Stat(filepath.FromSlash(path))
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func deriveRomBase(files []string) string {
