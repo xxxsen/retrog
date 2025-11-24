@@ -695,6 +695,9 @@
     if (state.keySelect && state.keySelect.value !== rawKey) {
       state.keySelect.value = rawKey;
     }
+    if (state.uploadButton) {
+      state.uploadButton.disabled = Boolean(state.locked);
+    }
     if (isUploadableKey(normalized)) {
       if (state.uploadControls) {
         state.uploadControls.classList.remove("hidden");
@@ -1083,6 +1086,7 @@
     uploadBtn.type = "button";
     uploadBtn.textContent = "上传文件";
     uploadBtn.addEventListener("click", () => startRowUpload(row));
+    uploadBtn.disabled = locked;
     const preview = document.createElement("div");
     preview.className = "asset-preview";
     uploadControls.appendChild(uploadBtn);
@@ -1125,6 +1129,8 @@
       uploadControls,
       previewEl: preview,
       feedbackEl: feedback,
+      uploadButton: uploadBtn,
+      locked,
     });
     updateRowKey(row, field.key || "", options.sourceGame || null);
     return row;
