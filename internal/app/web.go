@@ -874,7 +874,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				display = fmt.Sprintf("%s (%s)", title, romPath)
 			}
 			romBase := deriveRomBase(typed.Files)
-			assets, fallbackFields := collectGameAssets(metadataDir, typed, romBase, store, logger)
+			assets, fallbackFields := collectGameAssets(metadataDir, typed, romBase, romMissing, store, logger)
 			fields = appendFallbackAssetFields(fields, fallbackFields)
 			hasBoxArt := fieldExists(fields, "assets.boxfront")
 			if !hasBoxArt {
@@ -1759,7 +1759,7 @@ func deriveRomBase(files []string) string {
 	return ""
 }
 
-func collectGameAssets(metadataDir string, game metadata.Game, romBase string, store *assetStore, logger *zap.Logger) ([]*assetPayload, map[string]fallbackAssetField) {
+func collectGameAssets(metadataDir string, game metadata.Game, romBase string, romMissing bool, store *assetStore, logger *zap.Logger) ([]*assetPayload, map[string]fallbackAssetField) {
 	type assetCandidate struct {
 		name string
 		path string
@@ -1829,7 +1829,9 @@ func collectGameAssets(metadataDir string, game metadata.Game, romBase string, s
 		}
 		id, err := store.Register(candidate.path)
 		if err != nil {
-			logger.Warn("skip asset", zap.String("game", game.Title), zap.String("asset", candidate.name), zap.String("path", candidate.path), zap.Error(err))
+			if !romMissing { //rom不存在, 那么就没必要打这个日志了, 总不能rom不存在, 但是media存在吧...
+				logger.Warn("skip asset", zap.String("game", game.Title), zap.String("asset", candidate.name), zap.String("path", candidate.path), zap.Error(err))
+			}
 			continue
 		}
 		out = append(out, &assetPayload{
