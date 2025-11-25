@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -17,7 +18,15 @@ import (
 // RomTestCommand validates a ROM archive against an fbneo DAT.
 type RomTestCommand struct {
 	datPath  string
+	kind     string
 	filePath string
+	dirPath  string
+	exts     string
+}
+
+type romDefinition struct {
+	Name string
+	Roms []dat.Rom
 }
 
 func NewRomTestCommand() *RomTestCommand {
@@ -26,25 +35,39 @@ func NewRomTestCommand() *RomTestCommand {
 
 func (c *RomTestCommand) Name() string { return "rom-test" }
 
-func (c *RomTestCommand) Desc() string {
-	return "检查压缩包中的 ROM 是否符合 fbneo.dat"
-}
+func (c *RomTestCommand) Desc() string { return "检查压缩包中的 ROM 是否符合 DAT 定义" }
 
 func (c *RomTestCommand) Init(f *pflag.FlagSet) {
-	f.StringVar(&c.datPath, "dat", "", "fbneo.dat 文件路径")
+	f.StringVar(&c.datPath, "dat", "", "DAT 文件路径")
+	f.StringVar(&c.kind, "kind", "fbneo", "DAT 类型，可选 fbneo, mame")
 	f.StringVar(&c.filePath, "file", "", "待验证的压缩包文件路径")
+	f.StringVar(&c.dirPath, "dir", "", "待验证的压缩包目录，递归扫描")
+	f.StringVar(&c.exts, "ext", "zip,7z", "扫描扩展名，逗号分隔，例如 zip,7z")
 }
 
 func (c *RomTestCommand) PreRun(ctx context.Context) error {
+	kind := strings.ToLower(strings.TrimSpace(c.kind))
+	if kind == "" {
+		return errors.New("rom-test requires --kind")
+	}
+	if kind != "fbneo" && kind != "mame" {
+		return fmt.Errorf("unsupported kind: %s", kind)
+	}
+	if strings.TrimSpace(c.filePath) == "" && strings.TrimSpace(c.dirPath) == "" {
+		return errors.New("rom-test requires --file or --dir")
+	}
 	if strings.TrimSpace(c.datPath) == "" {
 		return errors.New("rom-test requires --dat")
 	}
-	if strings.TrimSpace(c.filePath) == "" {
-		return errors.New("rom-test requires --file")
+	if _, err := normalizeExts(c.exts); err != nil {
+		return err
 	}
 	logutil.GetLogger(ctx).Info("starting rom-test",
 		zap.String("dat", c.datPath),
+		zap.String("kind", c.kind),
 		zap.String("file", c.filePath),
+		zap.String("dir", c.dirPath),
+		zap.String("exts", c.exts),
 	)
 	return nil
 }
@@ -52,38 +75,37 @@ func (c *RomTestCommand) PreRun(ctx context.Context) error {
 func (c *RomTestCommand) Run(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 
-	parser := dat.NewParser()
-	df, err := parser.ParseFile(c.datPath)
+	lookup, err := c.loadRomDefinitions()
 	if err != nil {
 		return err
 	}
 
-	gameName := deriveGameName(c.filePath)
-	game := df.FindGame(gameName)
-	if game == nil {
-		return fmt.Errorf("game %s not found in dat", gameName)
-	}
-
-	zr, err := zip.OpenReader(c.filePath)
+	targets, err := c.collectTargets()
 	if err != nil {
-		return fmt.Errorf("open archive %s: %w", c.filePath, err)
-	}
-	defer zr.Close()
-
-	issues := validateRomArchive(game, zr.File)
-	if len(issues) == 0 {
-		logger.Info("rom check passed",
-			zap.String("game", gameName),
-			zap.Int("rom_count", len(game.Roms)),
-			zap.String("file", c.filePath),
-		)
-		return nil
+		return err
 	}
 
-	for _, issue := range issues {
-		logger.Error("rom check failed", zap.String("issue", issue))
+	failCount := 0
+	for _, target := range targets {
+		issues := c.validateFile(lookup, target)
+		if len(issues) == 0 {
+			fmt.Printf("%s -- test succ\n", target)
+			continue
+		}
+		failCount++
+		fmt.Printf("%s -- test fail\n", target)
+		for _, issue := range issues {
+			fmt.Printf("- %s\n", issue)
+		}
 	}
-	return fmt.Errorf("rom check found %d issue(s) for %s", len(issues), gameName)
+	if failCount > 0 {
+		return fmt.Errorf("rom check failed for %d file(s)", failCount)
+	}
+
+	logger.Info("rom check passed",
+		zap.Int("file_count", len(targets)),
+	)
+	return nil
 }
 
 func (c *RomTestCommand) PostRun(ctx context.Context) error { return nil }
@@ -156,4 +178,108 @@ func checkRomFile(rom dat.Rom, f *zip.File) []string {
 		}
 	}
 	return issues
+}
+
+func (c *RomTestCommand) loadRomDefinitions() (map[string]romDefinition, error) {
+	kind := strings.ToLower(strings.TrimSpace(c.kind))
+	result := make(map[string]romDefinition)
+	switch kind {
+	case "fbneo":
+		parser := dat.NewParser()
+		df, err := parser.ParseFile(c.datPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, game := range df.Games {
+			result[game.Name] = romDefinition{Name: game.Name, Roms: game.Roms}
+		}
+	case "mame":
+		parser := dat.NewMameParser()
+		df, err := parser.ParseFile(c.datPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, machine := range df.Machines {
+			result[machine.Name] = romDefinition{Name: machine.Name, Roms: machine.Roms}
+		}
+	default:
+		return nil, fmt.Errorf("unsupported kind: %s", c.kind)
+	}
+	return result, nil
+}
+
+func (c *RomTestCommand) collectTargets() ([]string, error) {
+	allowed, err := normalizeExts(c.exts)
+	if err != nil {
+		return nil, err
+	}
+	var targets []string
+	if strings.TrimSpace(c.filePath) != "" {
+		path := filepath.Clean(c.filePath)
+		if len(allowed) > 0 {
+			ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+			if _, ok := allowed[ext]; !ok {
+				return nil, fmt.Errorf("file %s skipped: extension not allowed", path)
+			}
+		}
+		targets = append(targets, path)
+	}
+	if strings.TrimSpace(c.dirPath) != "" {
+		err := filepath.WalkDir(c.dirPath, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if len(allowed) > 0 {
+				ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+				if _, ok := allowed[ext]; !ok {
+					return nil
+				}
+			}
+			targets = append(targets, filepath.Clean(path))
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("no rom files found to test")
+	}
+	return targets, nil
+}
+
+func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, path string) []string {
+	gameName := deriveGameName(path)
+	def, ok := lookup[gameName]
+	if !ok {
+		return []string{fmt.Sprintf("game %s not found in dat", gameName)}
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return []string{fmt.Sprintf("open archive %s: %v", path, err)}
+	}
+	defer zr.Close()
+
+	issues := validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, zr.File)
+	return issues
+}
+
+func normalizeExts(exts string) (map[string]struct{}, error) {
+	parts := strings.Split(exts, ",")
+	result := make(map[string]struct{})
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		trimmed = strings.TrimPrefix(trimmed, ".")
+		if trimmed == "" {
+			continue
+		}
+		result[strings.ToLower(trimmed)] = struct{}{}
+	}
+	if len(result) == 0 {
+		return nil, errors.New("invalid ext value")
+	}
+	return result, nil
 }

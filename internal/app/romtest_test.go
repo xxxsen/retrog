@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"hash/crc32"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -50,7 +51,7 @@ func TestValidateRomArchivePass(t *testing.T) {
 	}
 
 	files := makeZip(t, map[string][]byte{
-		"a.bin":                dataA,
+		"a.bin":                        dataA,
 		filepath.Join("path", "b.bin"): dataB,
 	})
 
@@ -122,4 +123,128 @@ func TestValidateRomArchiveNoMatchingCandidate(t *testing.T) {
 func crcHex(data []byte) string {
 	sum := crc32.ChecksumIEEE(data)
 	return strings.ToLower(fmt.Sprintf("%08x", sum))
+}
+
+func TestLoadRomDefinitionsFbneo(t *testing.T) {
+	dir := t.TempDir()
+	datPath := filepath.Join(dir, "fbneo.dat")
+	content := `<?xml version="1.0"?>
+<datafile>
+	<header>
+		<name>fbneo</name>
+	</header>
+	<game name="game1">
+		<description>Game 1</description>
+		<rom name="a.bin" size="3" crc="616263"/>
+	</game>
+</datafile>`
+	if err := os.WriteFile(datPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write dat: %v", err)
+	}
+	cmd := &RomTestCommand{kind: "fbneo", datPath: datPath}
+	defs, err := cmd.loadRomDefinitions()
+	if err != nil {
+		t.Fatalf("load definitions: %v", err)
+	}
+	def, ok := defs["game1"]
+	if !ok {
+		t.Fatalf("missing game1 definition")
+	}
+	if len(def.Roms) != 1 || def.Roms[0].Name != "a.bin" {
+		t.Fatalf("unexpected roms: %+v", def.Roms)
+	}
+}
+
+func TestLoadRomDefinitionsMame(t *testing.T) {
+	dir := t.TempDir()
+	datPath := filepath.Join(dir, "mame.dat")
+	content := `<?xml version="1.0"?>
+<!DOCTYPE datafile PUBLIC "-//Logiqx//DTD ROM Management Datafile//EN" "http://www.logiqx.com/Dats/datafile.dtd">
+<datafile>
+	<header><name>MAME</name></header>
+	<machine name="mamegame">
+		<description>Game</description>
+		<rom name="a.bin" size="1" crc="00"/>
+	</machine>
+</datafile>`
+	if err := os.WriteFile(datPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write dat: %v", err)
+	}
+	cmd := &RomTestCommand{kind: "mame", datPath: datPath}
+	defs, err := cmd.loadRomDefinitions()
+	if err != nil {
+		t.Fatalf("load definitions: %v", err)
+	}
+	if _, ok := defs["mamegame"]; !ok {
+		t.Fatalf("missing mamegame definition")
+	}
+}
+
+func TestCollectTargetsFiltersByExt(t *testing.T) {
+	dir := t.TempDir()
+	allowed := filepath.Join(dir, "game.zip")
+	skipped := filepath.Join(dir, "game.txt")
+	if err := os.WriteFile(allowed, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write allowed: %v", err)
+	}
+	if err := os.WriteFile(skipped, []byte("skip"), 0o644); err != nil {
+		t.Fatalf("write skipped: %v", err)
+	}
+	cmd := &RomTestCommand{dirPath: dir, exts: "zip"}
+	targets, err := cmd.collectTargets()
+	if err != nil {
+		t.Fatalf("collect targets: %v", err)
+	}
+	if len(targets) != 1 || targets[0] != allowed {
+		t.Fatalf("unexpected targets: %v", targets)
+	}
+}
+
+func TestValidateFile(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("abc")
+	crc := crcHex(data)
+	defs := map[string]romDefinition{
+		"good": {Name: "good", Roms: []dat.Rom{{Name: "a.bin", Size: int64(len(data)), CRC: crc}}},
+		"bad":  {Name: "bad", Roms: []dat.Rom{{Name: "missing.bin", Size: 1}}},
+	}
+
+	goodZip := filepath.Join(dir, "good.zip")
+	if err := createZipFile(goodZip, map[string][]byte{"a.bin": data}); err != nil {
+		t.Fatalf("create good zip: %v", err)
+	}
+	badZip := filepath.Join(dir, "bad.zip")
+	if err := createZipFile(badZip, map[string][]byte{"other.bin": data}); err != nil {
+		t.Fatalf("create bad zip: %v", err)
+	}
+
+	cmd := &RomTestCommand{}
+	if issues := cmd.validateFile(defs, goodZip); len(issues) != 0 {
+		t.Fatalf("expected no issues, got %v", issues)
+	}
+	if issues := cmd.validateFile(defs, badZip); len(issues) == 0 {
+		t.Fatalf("expected issues for bad zip")
+	}
+}
+
+func createZipFile(path string, files map[string][]byte) error {
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	w := zip.NewWriter(out)
+	for name, data := range files {
+		fw, err := w.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := fw.Write(data); err != nil {
+			return err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return nil
 }
