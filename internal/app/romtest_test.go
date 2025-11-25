@@ -55,7 +55,7 @@ func TestValidateRomArchivePass(t *testing.T) {
 		filepath.Join("path", "b.bin"): dataB,
 	})
 
-	issues, skipped, mismatch := validateRomArchive(game, files)
+	issues, skipped, mismatch := validateRomArchive(game, toArchiveFiles(files))
 	if len(issues) != 0 || skipped || mismatch {
 		t.Fatalf("expected no issues, got %v skipped %v mismatch %v", issues, skipped, mismatch)
 	}
@@ -75,7 +75,7 @@ func TestValidateRomArchiveDetectsProblems(t *testing.T) {
 		"badcrc.rom":  []byte("abc"),
 	})
 
-	issues, skipped, mismatch := validateRomArchive(game, files)
+	issues, skipped, mismatch := validateRomArchive(game, toArchiveFiles(files))
 	if len(issues) != 5 || skipped || mismatch {
 		t.Fatalf("expected 5 issues, got %v skipped %v mismatch %v", issues, skipped, mismatch)
 	}
@@ -96,7 +96,7 @@ func TestValidateRomArchiveChoosesMatchingCandidate(t *testing.T) {
 		filepath.Join("b", "dup.bin"): right,
 	})
 
-	issues, skipped, mismatch := validateRomArchive(game, files)
+	issues, skipped, mismatch := validateRomArchive(game, toArchiveFiles(files))
 	if len(issues) != 0 || skipped || mismatch {
 		t.Fatalf("expected no issues, got %v skipped %v mismatch %v", issues, skipped, mismatch)
 	}
@@ -114,7 +114,7 @@ func TestValidateRomArchiveNoMatchingCandidate(t *testing.T) {
 		filepath.Join("b", "dup.bin"): []byte("abcd"),
 	})
 
-	issues, skipped, mismatch := validateRomArchive(game, files)
+	issues, skipped, mismatch := validateRomArchive(game, toArchiveFiles(files))
 	if len(issues) != 1 || skipped || mismatch {
 		t.Fatalf("expected 1 issue, got %v skipped %v mismatch %v", issues, skipped, mismatch)
 	}
@@ -299,4 +299,16 @@ func createZipFile(path string, files map[string][]byte) error {
 		return err
 	}
 	return nil
+}
+
+func toArchiveFiles(files []*zip.File) []archiveFile {
+	var out []archiveFile
+	for _, f := range files {
+		out = append(out, archiveFile{
+			Name:  f.Name,
+			Size:  f.UncompressedSize64,
+			CRC32: f.CRC32,
+		})
+	}
+	return out
 }

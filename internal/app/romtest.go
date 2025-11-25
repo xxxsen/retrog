@@ -11,11 +11,18 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bodgit/sevenzip"
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"github.com/xxxsen/retrog/internal/dat"
 	"go.uber.org/zap"
 )
+
+type archiveFile struct {
+	Name  string
+	Size  uint64
+	CRC32 uint32
+}
 
 // RomTestCommand validates a ROM archive against an fbneo DAT.
 type RomTestCommand struct {
@@ -177,13 +184,13 @@ func deriveGameName(path string) string {
 }
 
 // validateRomArchive compares archive contents against rom definitions.
-func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool, bool) {
+func validateRomArchive(game *dat.Game, files []archiveFile) ([]string, bool, bool) {
 	if game == nil {
 		return []string{"nil game reference"}, false, false
 	}
-	fullIndex := make(map[string]*zip.File, len(files))
-	baseIndex := make(map[string][]*zip.File, len(files))
-	crcIndex := make(map[string][]*zip.File, len(files))
+	fullIndex := make(map[string]archiveFile, len(files))
+	baseIndex := make(map[string][]archiveFile, len(files))
+	crcIndex := make(map[string][]archiveFile, len(files))
 	for _, f := range files {
 		lowerFull := strings.ToLower(f.Name)
 		fullIndex[lowerFull] = f
@@ -218,7 +225,7 @@ func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool, bool
 			handled := false
 			if rom.CRC != "" {
 				for _, f := range crcIndex[strings.ToLower(rom.CRC)] {
-					if rom.Size > 0 && int64(f.UncompressedSize64) != rom.Size {
+					if rom.Size > 0 && int64(f.Size) != rom.Size {
 						continue
 					}
 					mismatches := checkRomFile(displayName, rom, f)
@@ -258,10 +265,10 @@ func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool, bool
 	return issues, skippedOptional, nameMismatch
 }
 
-func checkRomFile(displayName string, rom dat.Rom, f *zip.File) []string {
+func checkRomFile(displayName string, rom dat.Rom, f archiveFile) []string {
 	var issues []string
 	if rom.Size > 0 {
-		size := int64(f.UncompressedSize64)
+		size := int64(f.Size)
 		if size != rom.Size {
 			issues = append(issues, fmt.Sprintf("size mismatch for %s: expected %d, got %d", displayName, rom.Size, size))
 		}
@@ -363,7 +370,7 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", nil, false, false, false, false, false
 	}
 	closers = append(closers, closer)
-	allFiles := append([]*zip.File{}, files...)
+	allFiles := append([]archiveFile{}, files...)
 	parentLabel := ""
 	parentChainPaths := []string{}
 	parentIsBios := false
@@ -429,12 +436,40 @@ func normalizeExts(exts string) (map[string]struct{}, error) {
 	return result, nil
 }
 
-func openArchive(path string) ([]*zip.File, io.Closer, error) {
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		return nil, nil, err
+func openArchive(path string) ([]archiveFile, io.Closer, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".zip":
+		zr, err := zip.OpenReader(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		files := make([]archiveFile, 0, len(zr.File))
+		for _, f := range zr.File {
+			files = append(files, archiveFile{
+				Name:  f.Name,
+				Size:  f.UncompressedSize64,
+				CRC32: f.CRC32,
+			})
+		}
+		return files, zr, nil
+	case ".7z":
+		sr, err := sevenzip.OpenReader(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		files := make([]archiveFile, 0, len(sr.File))
+		for _, f := range sr.File {
+			files = append(files, archiveFile{
+				Name:  f.Name,
+				Size:  f.UncompressedSize,
+				CRC32: f.CRC32,
+			})
+		}
+		return files, sr, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported archive format: %s", ext)
 	}
-	return zr.File, zr, nil
 }
 
 func romFileName(rom dat.Rom) string {
