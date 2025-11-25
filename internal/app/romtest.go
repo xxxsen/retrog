@@ -111,7 +111,7 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 
 	failCount := 0
 	for _, target := range targets {
-		issues, parentPath, skippedOptional, nameMismatch := c.validateFile(lookup, nameToPath, target)
+		issues, parentPath, skippedOptional, nameMismatch, parentMissing := c.validateFile(lookup, nameToPath, target)
 		label := target
 		if strings.TrimSpace(parentPath) != "" {
 			label = fmt.Sprintf("%s(parent: %s)", target, parentPath)
@@ -123,6 +123,9 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 			}
 			if nameMismatch {
 				tags = append(tags, "name mismatch")
+			}
+			if parentMissing {
+				tags = append(tags, "parent rom missing")
 			}
 			if len(tags) > 0 {
 				fmt.Printf("%s -- test succ(%s)\n", label, strings.Join(tags, ", "))
@@ -328,11 +331,11 @@ func (c *RomTestCommand) collectTargets(allowed map[string]struct{}) ([]string, 
 	return targets, nil
 }
 
-func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool, bool) {
+func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool, bool, bool) {
 	gameName := deriveGameName(path)
 	def, ok := lookup[gameName]
 	if !ok {
-		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false, false
+		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false, false, false
 	}
 
 	var closers []io.Closer
@@ -344,13 +347,14 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 
 	files, closer, err := openArchive(path)
 	if err != nil {
-		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false, false
+		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false, false, false
 	}
 	closers = append(closers, closer)
 	allFiles := append([]*zip.File{}, files...)
 	parentLabel := ""
 	skippedOptional := false
 	nameMismatch := false
+	parentMissing := false
 
 	parent := strings.TrimSpace(def.Parent)
 	if parent != "" {
@@ -359,19 +363,19 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 			parentLabel = parentPath
 			pFiles, pCloser, err := openArchive(parentPath)
 			if err != nil {
-				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, false, false
+				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, false, false, false
 			}
 			closers = append(closers, pCloser)
 			allFiles = append(allFiles, pFiles...)
 		} else {
-			return []string{fmt.Sprintf("parent rom missing: %s", parent)}, parentLabel, false, false
+			parentMissing = true
 		}
 	}
 
 	issues, skipped, mismatched := validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, allFiles)
 	skippedOptional = skippedOptional || skipped
 	nameMismatch = nameMismatch || mismatched
-	return issues, parentLabel, skippedOptional, nameMismatch
+	return issues, parentLabel, skippedOptional, nameMismatch, parentMissing
 }
 
 func normalizeExts(exts string) (map[string]struct{}, error) {

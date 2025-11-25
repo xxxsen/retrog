@@ -242,31 +242,31 @@ func TestValidateFile(t *testing.T) {
 		"bad":  "bad.zip",
 	}
 
-	if issues, parent, skipped, mismatch := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" || skipped || mismatch {
-		t.Fatalf("expected no issues, got %v (parent %s, skipped %v, mismatch %v)", issues, parent, skipped, mismatch)
+	if issues, parent, skipped, mismatch, parentMissing := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" || skipped || mismatch || parentMissing {
+		t.Fatalf("expected no issues, got %v (parent %s, skipped %v, mismatch %v, parentMissing %v)", issues, parent, skipped, mismatch, parentMissing)
 	}
 	nameToPath["bad"] = badZip
-	if issues, parent, skipped, mismatch := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" || skipped || mismatch {
+	if issues, parent, skipped, mismatch, parentMissing := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" || skipped || mismatch || parentMissing {
 		t.Fatalf("expected issues for bad zip")
 	}
 }
 
 func TestValidateFileParentMissing(t *testing.T) {
 	dir := t.TempDir()
-	data := []byte("abc")
+	data := bytes.Repeat([]byte("a"), 600)
 	crc := crcHex(data)
 	defs := map[string]romDefinition{
 		"child":  {Name: "child", Parent: "parent", Roms: []dat.Rom{{Name: "a.bin", Size: int64(len(data)), CRC: crc}}},
 		"parent": {Name: "parent", Roms: []dat.Rom{{Name: "a.bin", Size: int64(len(data)), CRC: crc}}},
 	}
 	childZip := filepath.Join(dir, "child.zip")
-	if err := createZipFile(childZip, map[string][]byte{}); err != nil {
+	if err := createZipFile(childZip, map[string][]byte{"a.bin": data}); err != nil {
 		t.Fatalf("create child zip: %v", err)
 	}
 	cmd := &RomTestCommand{}
 	nameToPath := map[string]string{"child": childZip}
-	if issues, parent, skipped, mismatch := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 1 || !strings.Contains(issues[0], "parent") || !strings.Contains(parent, "parent") || skipped || mismatch {
-		t.Fatalf("expected parent missing issue, got %v (parent %s, skipped %v, mismatch %v)", issues, parent, skipped, mismatch)
+	if issues, parent, skipped, mismatch, parentMissing := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || !parentMissing || skipped || mismatch {
+		t.Fatalf("expected parent missing success with tag, got %v (parent %s, skipped %v, mismatch %v, parentMissing %v)", issues, parent, skipped, mismatch, parentMissing)
 	}
 
 	parentZip := filepath.Join(dir, "parent.zip")
@@ -274,8 +274,8 @@ func TestValidateFileParentMissing(t *testing.T) {
 		t.Fatalf("create parent zip: %v", err)
 	}
 	nameToPath["parent"] = parentZip
-	if issues, parent, skipped, mismatch := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || skipped || mismatch {
-		t.Fatalf("expected no issues when parent present, got %v (parent %s, skipped %v, mismatch %v)", issues, parent, skipped, mismatch)
+	if issues, parent, skipped, mismatch, parentMissing := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || skipped || mismatch || parentMissing {
+		t.Fatalf("expected no issues when parent present, got %v (parent %s, skipped %v, mismatch %v, parentMissing %v)", issues, parent, skipped, mismatch, parentMissing)
 	}
 }
 
