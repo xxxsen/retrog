@@ -55,9 +55,9 @@ func TestValidateRomArchivePass(t *testing.T) {
 		filepath.Join("path", "b.bin"): dataB,
 	})
 
-	issues := validateRomArchive(game, files)
-	if len(issues) != 0 {
-		t.Fatalf("expected no issues, got %v", issues)
+	issues, skipped := validateRomArchive(game, files)
+	if len(issues) != 0 || skipped {
+		t.Fatalf("expected no issues, got %v skipped %v", issues, skipped)
 	}
 }
 
@@ -75,9 +75,9 @@ func TestValidateRomArchiveDetectsProblems(t *testing.T) {
 		"badcrc.rom":  []byte("abc"),
 	})
 
-	issues := validateRomArchive(game, files)
-	if len(issues) != 4 {
-		t.Fatalf("expected 4 issues, got %v", issues)
+	issues, skipped := validateRomArchive(game, files)
+	if len(issues) != 4 || skipped {
+		t.Fatalf("expected 4 issues, got %v skipped %v", issues, skipped)
 	}
 }
 
@@ -96,9 +96,9 @@ func TestValidateRomArchiveChoosesMatchingCandidate(t *testing.T) {
 		filepath.Join("b", "dup.bin"): right,
 	})
 
-	issues := validateRomArchive(game, files)
-	if len(issues) != 0 {
-		t.Fatalf("expected no issues, got %v", issues)
+	issues, skipped := validateRomArchive(game, files)
+	if len(issues) != 0 || skipped {
+		t.Fatalf("expected no issues, got %v skipped %v", issues, skipped)
 	}
 }
 
@@ -114,9 +114,9 @@ func TestValidateRomArchiveNoMatchingCandidate(t *testing.T) {
 		filepath.Join("b", "dup.bin"): []byte("abcd"),
 	})
 
-	issues := validateRomArchive(game, files)
-	if len(issues) != 1 {
-		t.Fatalf("expected 1 issue, got %v", issues)
+	issues, skipped := validateRomArchive(game, files)
+	if len(issues) != 1 || skipped {
+		t.Fatalf("expected 1 issue, got %v skipped %v", issues, skipped)
 	}
 }
 
@@ -242,11 +242,11 @@ func TestValidateFile(t *testing.T) {
 		"bad":  "bad.zip",
 	}
 
-	if issues, parent := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" {
-		t.Fatalf("expected no issues, got %v (parent %s)", issues, parent)
+	if issues, parent, skipped := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" || skipped {
+		t.Fatalf("expected no issues, got %v (parent %s, skipped %v)", issues, parent, skipped)
 	}
 	nameToPath["bad"] = badZip
-	if issues, parent := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" {
+	if issues, parent, skipped := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" || skipped {
 		t.Fatalf("expected issues for bad zip")
 	}
 }
@@ -265,8 +265,8 @@ func TestValidateFileParentMissing(t *testing.T) {
 	}
 	cmd := &RomTestCommand{}
 	nameToPath := map[string]string{"child": childZip}
-	if issues, parent := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 1 || !strings.Contains(issues[0], "parent") || !strings.Contains(parent, "parent") {
-		t.Fatalf("expected parent missing issue, got %v (parent %s)", issues, parent)
+	if issues, parent, skipped := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 1 || !strings.Contains(issues[0], "parent") || !strings.Contains(parent, "parent") || skipped {
+		t.Fatalf("expected parent missing issue, got %v (parent %s, skipped %v)", issues, parent, skipped)
 	}
 
 	parentZip := filepath.Join(dir, "parent.zip")
@@ -274,8 +274,8 @@ func TestValidateFileParentMissing(t *testing.T) {
 		t.Fatalf("create parent zip: %v", err)
 	}
 	nameToPath["parent"] = parentZip
-	if issues, parent := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" {
-		t.Fatalf("expected no issues when parent present, got %v (parent %s)", issues, parent)
+	if issues, parent, skipped := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || skipped {
+		t.Fatalf("expected no issues when parent present, got %v (parent %s, skipped %v)", issues, parent, skipped)
 	}
 }
 
