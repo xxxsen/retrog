@@ -915,7 +915,9 @@ func convertBlockFields(blk *metadata.Block) []*fieldPayload {
 			continue
 		}
 		cp := make([]string, len(entry.Values))
-		copy(cp, entry.Values)
+		for idx, value := range entry.Values {
+			cp[idx] = normalizeFieldValueForDisplay(entry.Key, value)
+		}
 		out = append(out, &fieldPayload{Key: entry.Key, Values: cp})
 	}
 	return out
@@ -1309,7 +1311,7 @@ func combineFieldValues(fields []*fieldPayload, requiredKey string) ([]string, m
 			return nil, nil, fmt.Errorf("field key cannot be empty")
 		}
 		key := strings.ToLower(rawKey)
-		normalized := normalizeFieldValues(field.Values)
+		normalized := normalizeFieldValuesForKey(key, field.Values)
 		if len(normalized) == 0 {
 			continue
 		}
@@ -1548,6 +1550,29 @@ func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Docum
 	}
 }
 
+func normalizeFieldValueForDisplay(key, value string) string {
+	if isMultilineTextKey(key) {
+		return decodeEscapedNewlines(value)
+	}
+	return value
+}
+
+func normalizeFieldValuesForKey(key string, values []string) []string {
+	normalized := normalizeFieldValues(values)
+	if len(normalized) == 0 {
+		return nil
+	}
+	if isMultilineTextKey(key) {
+		joined := strings.Join(normalized, "\n")
+		escaped := encodeNewlines(joined)
+		if strings.TrimSpace(escaped) == "" {
+			return nil
+		}
+		return []string{escaped}
+	}
+	return normalized
+}
+
 func normalizeFieldValues(values []string) []string {
 	var out []string
 	for _, value := range values {
@@ -1559,6 +1584,31 @@ func normalizeFieldValues(values []string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+
+func encodeNewlines(value string) string {
+	if value == "" {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.ReplaceAll(value, "\n", "\\n")
+}
+
+func decodeEscapedNewlines(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.ReplaceAll(value, "\\n", "\n")
+}
+
+func isMultilineTextKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "description", "summary", "desc":
+		return true
+	default:
+		return false
+	}
 }
 
 func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile string, sourcePath, stagedName, assetKey string) (string, error) {

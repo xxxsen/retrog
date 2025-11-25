@@ -95,6 +95,7 @@
   let editContext = null;
   let collectionEditContext = null;
   const collectionExtensions = new Map();
+  const MULTILINE_TEXT_KEYS = new Set(["description", "summary", "desc"]);
 
   let collections = [];
   let currentCollectionId = null;
@@ -103,6 +104,22 @@
   let showMissingGames = false;
   let searchQuery = "";
   let searchCollectionId = "";
+
+  function isMultilineTextKey(key) {
+    return MULTILINE_TEXT_KEYS.has((key || "").trim().toLowerCase());
+  }
+
+  function normalizeValuesForPayload(key, rawValue) {
+    const cleaned = (rawValue || "").replace(/\r/g, "");
+    if (isMultilineTextKey(key)) {
+      const normalized = cleaned.trim();
+      return normalized ? [normalized] : [];
+    }
+    return cleaned
+      .split("\n")
+      .map((v) => v.trim())
+      .filter((v) => v.length);
+  }
 
   async function init() {
     try {
@@ -1152,8 +1169,7 @@
       const key = keySelect
         ? (keySelect.value || "").trim().toLowerCase()
         : (row.dataset.key || "").trim().toLowerCase();
-      const rawValues = valueArea.value.replace(/\r/g, "").split("\n");
-      const values = rawValues.map((v) => v.trim()).filter((v) => v.length);
+      const values = normalizeValuesForPayload(key, valueArea.value);
       if (key) {
         payload.push({ key, values });
       }
@@ -1294,11 +1310,7 @@
       if (!el) {
         return;
       }
-      const raw = (el.value || "").replace(/\r/g, "");
-      const values = raw
-        .split("\n")
-        .map((v) => v.trim())
-        .filter((v) => v.length);
+      const values = normalizeValuesForPayload(cfg.key, el.value);
       const canonicalKey = (cfg.key || "").toLowerCase();
       handledKeys.add(canonicalKey);
       if (Array.isArray(cfg.aliases)) {
