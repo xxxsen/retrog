@@ -111,14 +111,21 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 
 	failCount := 0
 	for _, target := range targets {
-		issues, parentPath, skippedOptional := c.validateFile(lookup, nameToPath, target)
+		issues, parentPath, skippedOptional, nameMismatch := c.validateFile(lookup, nameToPath, target)
 		label := target
 		if strings.TrimSpace(parentPath) != "" {
 			label = fmt.Sprintf("%s(parent: %s)", target, parentPath)
 		}
 		if len(issues) == 0 {
+			var tags []string
 			if skippedOptional {
-				fmt.Printf("%s -- test succ(skip part)\n", label)
+				tags = append(tags, "skip part")
+			}
+			if nameMismatch {
+				tags = append(tags, "name mismatch")
+			}
+			if len(tags) > 0 {
+				fmt.Printf("%s -- test succ(%s)\n", label, strings.Join(tags, ", "))
 			} else {
 				fmt.Printf("%s -- test succ\n", label)
 			}
@@ -154,30 +161,35 @@ func deriveGameName(path string) string {
 }
 
 // validateRomArchive compares archive contents against rom definitions.
-func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool) {
+func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool, bool) {
 	if game == nil {
-		return []string{"nil game reference"}, false
+		return []string{"nil game reference"}, false, false
 	}
 	fullIndex := make(map[string]*zip.File, len(files))
 	baseIndex := make(map[string][]*zip.File, len(files))
+	crcIndex := make(map[string][]*zip.File, len(files))
 	for _, f := range files {
 		lowerFull := strings.ToLower(f.Name)
 		fullIndex[lowerFull] = f
 		base := strings.ToLower(filepath.Base(f.Name))
 		baseIndex[base] = append(baseIndex[base], f)
+		crc := fmt.Sprintf("%08x", f.CRC32)
+		crcIndex[strings.ToLower(crc)] = append(crcIndex[strings.ToLower(crc)], f)
 	}
 
 	var issues []string
 	skippedOptional := false
+	nameMismatch := false
 	for _, rom := range game.Roms {
 		if isNoDump(rom) {
 			continue
 		}
 		displayName := romFileName(rom)
+		optional := isOptionalRom(displayName) || (rom.Size > 0 && rom.Size < 512)
 		keyFull := strings.ToLower(displayName)
 		if f, ok := fullIndex[keyFull]; ok {
 			mismatches := checkRomFile(displayName, rom, f)
-			if len(mismatches) > 0 && isOptionalRom(displayName) {
+			if len(mismatches) > 0 && optional {
 				skippedOptional = true
 				continue
 			}
@@ -187,7 +199,24 @@ func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool) {
 
 		candidates := baseIndex[keyFull]
 		if len(candidates) == 0 {
-			if isOptionalRom(displayName) {
+			handled := false
+			if rom.CRC != "" {
+				for _, f := range crcIndex[strings.ToLower(rom.CRC)] {
+					if rom.Size > 0 && int64(f.UncompressedSize64) != rom.Size {
+						continue
+					}
+					mismatches := checkRomFile(displayName, rom, f)
+					if len(mismatches) == 0 {
+						nameMismatch = true
+						handled = true
+						break
+					}
+				}
+			}
+			if handled {
+				continue
+			}
+			if optional {
 				skippedOptional = true
 				continue
 			}
@@ -203,14 +232,14 @@ func validateRomArchive(game *dat.Game, files []*zip.File) ([]string, bool) {
 			}
 		}
 		if !matched {
-			if isOptionalRom(displayName) {
+			if optional {
 				skippedOptional = true
 				continue
 			}
 			issues = append(issues, fmt.Sprintf("no candidate matched rom %s (candidates: %d)", displayName, len(candidates)))
 		}
 	}
-	return issues, skippedOptional
+	return issues, skippedOptional, nameMismatch
 }
 
 func checkRomFile(displayName string, rom dat.Rom, f *zip.File) []string {
@@ -299,11 +328,11 @@ func (c *RomTestCommand) collectTargets(allowed map[string]struct{}) ([]string, 
 	return targets, nil
 }
 
-func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool) {
+func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool, bool) {
 	gameName := deriveGameName(path)
 	def, ok := lookup[gameName]
 	if !ok {
-		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false
+		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false, false
 	}
 
 	var closers []io.Closer
@@ -315,12 +344,13 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 
 	files, closer, err := openArchive(path)
 	if err != nil {
-		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false
+		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false, false
 	}
 	closers = append(closers, closer)
 	allFiles := append([]*zip.File{}, files...)
 	parentLabel := ""
 	skippedOptional := false
+	nameMismatch := false
 
 	parent := strings.TrimSpace(def.Parent)
 	if parent != "" {
@@ -329,18 +359,19 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 			parentLabel = parentPath
 			pFiles, pCloser, err := openArchive(parentPath)
 			if err != nil {
-				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, false
+				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, false, false
 			}
 			closers = append(closers, pCloser)
 			allFiles = append(allFiles, pFiles...)
 		} else {
-			return []string{fmt.Sprintf("parent rom missing: %s", parent)}, parentLabel, false
+			return []string{fmt.Sprintf("parent rom missing: %s", parent)}, parentLabel, false, false
 		}
 	}
 
-	issues, skipped := validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, allFiles)
+	issues, skipped, mismatched := validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, allFiles)
 	skippedOptional = skippedOptional || skipped
-	return issues, parentLabel, skippedOptional
+	nameMismatch = nameMismatch || mismatched
+	return issues, parentLabel, skippedOptional, nameMismatch
 }
 
 func normalizeExts(exts string) (map[string]struct{}, error) {
@@ -408,5 +439,30 @@ func isNoDump(rom dat.Rom) bool {
 
 func isOptionalRom(name string) bool {
 	lower := strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(lower, "pal") || strings.HasPrefix(lower, "gal")
+	switch {
+	case strings.HasSuffix(lower, ".mcu"):
+		return true
+	case strings.HasPrefix(lower, "pal"):
+		return true
+	case strings.HasPrefix(lower, "gal"):
+		return true
+	case strings.HasSuffix(lower, ".pld"):
+		return true
+	case strings.HasSuffix(lower, ".prom"):
+		return true
+	case strings.HasPrefix(lower, "i8751"):
+		return true
+	case strings.HasPrefix(lower, "68705"):
+		return true
+	case strings.HasPrefix(lower, "6805"):
+		return true
+	case strings.HasPrefix(lower, "i80c51"):
+		return true
+	case strings.HasPrefix(lower, "pic"):
+		return true
+	case strings.HasPrefix(lower, "mcs51"):
+		return true
+	default:
+		return false
+	}
 }
