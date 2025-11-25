@@ -112,7 +112,7 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 
 	failCount := 0
 	for _, target := range targets {
-		issues, parentPath, parentIsBios, skippedOptional, nameMismatch, parentMissing := c.validateFile(lookup, nameToPath, target)
+		issues, parentPath, parentIsBios, skippedOptional, nameMismatch, parentMissing, biosCrcMismatch := c.validateFile(lookup, nameToPath, target)
 		label := target
 		if strings.TrimSpace(parentPath) != "" {
 			parentBase := filepath.Base(parentPath)
@@ -125,13 +125,16 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 		if len(issues) == 0 {
 			var tags []string
 			if skippedOptional {
-				tags = append(tags, "skip part")
+				tags = append(tags, "skip optional")
 			}
 			if nameMismatch {
 				tags = append(tags, "name mismatch")
 			}
 			if parentMissing {
 				tags = append(tags, "parent rom missing")
+			}
+			if biosCrcMismatch {
+				tags = append(tags, "bios crc mismatch")
 			}
 			if len(tags) > 0 {
 				fmt.Printf("%s -- test succ(%s)\n", label, strings.Join(tags, ", "))
@@ -337,11 +340,11 @@ func (c *RomTestCommand) collectTargets(allowed map[string]struct{}) ([]string, 
 	return targets, nil
 }
 
-func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool, bool, bool, bool) {
+func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool, bool, bool, bool, bool) {
 	gameName := deriveGameName(path)
 	def, ok := lookup[gameName]
 	if !ok {
-		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false, false, false, false
+		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false, false, false, false, false
 	}
 
 	var closers []io.Closer
@@ -353,7 +356,7 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 
 	files, closer, err := openArchive(path)
 	if err != nil {
-		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false, false, false, false
+		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false, false, false, false, false
 	}
 	closers = append(closers, closer)
 	allFiles := append([]*zip.File{}, files...)
@@ -373,7 +376,7 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 			}
 			pFiles, pCloser, err := openArchive(parentPath)
 			if err != nil {
-				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, parentIsBios, false, false, false
+				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, parentIsBios, false, false, false, false
 			}
 			closers = append(closers, pCloser)
 			allFiles = append(allFiles, pFiles...)
@@ -385,7 +388,12 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 	issues, skipped, mismatched := validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, allFiles)
 	skippedOptional = skippedOptional || skipped
 	nameMismatch = nameMismatch || mismatched
-	return issues, parentLabel, parentIsBios, skippedOptional, nameMismatch, parentMissing
+	biosCrcMismatch := false
+	if parentIsBios && len(issues) > 0 && allCrcMismatch(issues) {
+		biosCrcMismatch = true
+		issues = nil
+	}
+	return issues, parentLabel, parentIsBios, skippedOptional, nameMismatch, parentMissing, biosCrcMismatch
 }
 
 func normalizeExts(exts string) (map[string]struct{}, error) {
@@ -497,4 +505,13 @@ func (c *RomTestCommand) isBiosPath(p string) bool {
 	target = filepath.Clean(target)
 	prefix := biosRoot + string(os.PathSeparator)
 	return target == biosRoot || strings.HasPrefix(target, prefix)
+}
+
+func allCrcMismatch(issues []string) bool {
+	for _, issue := range issues {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(issue)), "crc mismatch for ") {
+			return false
+		}
+	}
+	return len(issues) > 0
 }
