@@ -219,11 +219,45 @@ func TestValidateFile(t *testing.T) {
 	}
 
 	cmd := &RomTestCommand{}
-	if issues := cmd.validateFile(defs, goodZip); len(issues) != 0 {
-		t.Fatalf("expected no issues, got %v", issues)
+	nameToPath := map[string]string{
+		"good": "good.zip",
+		"bad":  "bad.zip",
 	}
-	if issues := cmd.validateFile(defs, badZip); len(issues) == 0 {
+
+	if issues, parent := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" {
+		t.Fatalf("expected no issues, got %v (parent %s)", issues, parent)
+	}
+	nameToPath["bad"] = badZip
+	if issues, parent := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" {
 		t.Fatalf("expected issues for bad zip")
+	}
+}
+
+func TestValidateFileParentMissing(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("abc")
+	crc := crcHex(data)
+	defs := map[string]romDefinition{
+		"child":  {Name: "child", Parent: "parent", Roms: []dat.Rom{{Name: "a.bin", Size: int64(len(data)), CRC: crc}}},
+		"parent": {Name: "parent", Roms: []dat.Rom{{Name: "a.bin", Size: int64(len(data)), CRC: crc}}},
+	}
+	childZip := filepath.Join(dir, "child.zip")
+	if err := createZipFile(childZip, map[string][]byte{}); err != nil {
+		t.Fatalf("create child zip: %v", err)
+	}
+	cmd := &RomTestCommand{}
+	nameToPath := map[string]string{"child": childZip}
+	if issues, parent := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 1 || !strings.Contains(issues[0], "parent") || !strings.Contains(parent, "parent") {
+		t.Fatalf("expected parent missing issue, got %v (parent %s)", issues, parent)
+	}
+
+	parentZip := filepath.Join(dir, "parent.zip")
+	if err := createZipFile(parentZip, map[string][]byte{"a.bin": data}); err != nil {
+		t.Fatalf("create parent zip: %v", err)
+	}
+	nameToPath["parent"] = parentZip
+	if issues, parent := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" {
+		t.Fatalf("expected no issues when parent present, got %v (parent %s)", issues, parent)
 	}
 }
 

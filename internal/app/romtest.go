@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -25,8 +26,9 @@ type RomTestCommand struct {
 }
 
 type romDefinition struct {
-	Name string
-	Roms []dat.Rom
+	Name   string
+	Parent string
+	Roms   []dat.Rom
 }
 
 func NewRomTestCommand() *RomTestCommand {
@@ -85,15 +87,24 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 		return err
 	}
 
+	nameToPath := make(map[string]string, len(targets))
+	for _, t := range targets {
+		nameToPath[strings.ToLower(deriveGameName(t))] = t
+	}
+
 	failCount := 0
 	for _, target := range targets {
-		issues := c.validateFile(lookup, target)
+		issues, parentPath := c.validateFile(lookup, nameToPath, target)
+		label := target
+		if strings.TrimSpace(parentPath) != "" {
+			label = fmt.Sprintf("%s(parent: %s)", target, parentPath)
+		}
 		if len(issues) == 0 {
-			fmt.Printf("%s -- test succ\n", target)
+			fmt.Printf("%s -- test succ\n", label)
 			continue
 		}
 		failCount++
-		fmt.Printf("%s -- test fail\n", target)
+		fmt.Printf("%s -- test fail\n", label)
 		for _, issue := range issues {
 			fmt.Printf("- %s\n", issue)
 		}
@@ -137,44 +148,45 @@ func validateRomArchive(game *dat.Game, files []*zip.File) []string {
 
 	var issues []string
 	for _, rom := range game.Roms {
-		keyFull := strings.ToLower(rom.Name)
+		displayName := romFileName(rom)
+		keyFull := strings.ToLower(displayName)
 		if f, ok := fullIndex[keyFull]; ok {
-			issues = append(issues, checkRomFile(rom, f)...)
+			issues = append(issues, checkRomFile(displayName, rom, f)...)
 			continue
 		}
 
 		candidates := baseIndex[keyFull]
 		if len(candidates) == 0 {
-			issues = append(issues, fmt.Sprintf("missing rom: %s", rom.Name))
+			issues = append(issues, fmt.Sprintf("missing rom: %s", displayName))
 			continue
 		}
 
 		matched := false
 		for _, f := range candidates {
-			if len(checkRomFile(rom, f)) == 0 {
+			if len(checkRomFile(displayName, rom, f)) == 0 {
 				matched = true
 				break
 			}
 		}
 		if !matched {
-			issues = append(issues, fmt.Sprintf("no candidate matched rom %s (candidates: %d)", rom.Name, len(candidates)))
+			issues = append(issues, fmt.Sprintf("no candidate matched rom %s (candidates: %d)", displayName, len(candidates)))
 		}
 	}
 	return issues
 }
 
-func checkRomFile(rom dat.Rom, f *zip.File) []string {
+func checkRomFile(displayName string, rom dat.Rom, f *zip.File) []string {
 	var issues []string
 	if rom.Size > 0 {
 		size := int64(f.UncompressedSize64)
 		if size != rom.Size {
-			issues = append(issues, fmt.Sprintf("size mismatch for %s: expected %d, got %d", rom.Name, rom.Size, size))
+			issues = append(issues, fmt.Sprintf("size mismatch for %s: expected %d, got %d", displayName, rom.Size, size))
 		}
 	}
 	if rom.CRC != "" {
 		crc := fmt.Sprintf("%08x", f.CRC32)
 		if !strings.EqualFold(crc, rom.CRC) {
-			issues = append(issues, fmt.Sprintf("crc mismatch for %s: expected %s, got %s", rom.Name, rom.CRC, crc))
+			issues = append(issues, fmt.Sprintf("crc mismatch for %s: expected %s, got %s", displayName, rom.CRC, crc))
 		}
 	}
 	return issues
@@ -191,7 +203,7 @@ func (c *RomTestCommand) loadRomDefinitions() (map[string]romDefinition, error) 
 			return nil, err
 		}
 		for _, game := range df.Games {
-			result[game.Name] = romDefinition{Name: game.Name, Roms: game.Roms}
+			result[game.Name] = romDefinition{Name: game.Name, Parent: strings.TrimSpace(game.CloneOf), Roms: game.Roms}
 		}
 	case "mame":
 		parser := dat.NewMameParser()
@@ -200,7 +212,11 @@ func (c *RomTestCommand) loadRomDefinitions() (map[string]romDefinition, error) 
 			return nil, err
 		}
 		for _, machine := range df.Machines {
-			result[machine.Name] = romDefinition{Name: machine.Name, Roms: machine.Roms}
+			parent := strings.TrimSpace(machine.CloneOf)
+			if parent == "" {
+				parent = strings.TrimSpace(machine.RomOf)
+			}
+			result[machine.Name] = romDefinition{Name: machine.Name, Parent: parent, Roms: machine.Roms}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported kind: %s", c.kind)
@@ -251,20 +267,45 @@ func (c *RomTestCommand) collectTargets() ([]string, error) {
 	return targets, nil
 }
 
-func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, path string) []string {
+func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string) {
 	gameName := deriveGameName(path)
 	def, ok := lookup[gameName]
 	if !ok {
-		return []string{fmt.Sprintf("game %s not found in dat", gameName)}
+		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, ""
 	}
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		return []string{fmt.Sprintf("open archive %s: %v", path, err)}
-	}
-	defer zr.Close()
 
-	issues := validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, zr.File)
-	return issues
+	var closers []io.Closer
+	defer func() {
+		for _, c := range closers {
+			_ = c.Close()
+		}
+	}()
+
+	files, closer, err := openArchive(path)
+	if err != nil {
+		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, ""
+	}
+	closers = append(closers, closer)
+	allFiles := append([]*zip.File{}, files...)
+	parentLabel := ""
+
+	parent := strings.TrimSpace(def.Parent)
+	if parent != "" {
+		parentLabel = parent + ".zip"
+		if parentPath, ok := nameToPath[strings.ToLower(parent)]; ok {
+			parentLabel = parentPath
+			pFiles, pCloser, err := openArchive(parentPath)
+			if err != nil {
+				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel
+			}
+			closers = append(closers, pCloser)
+			allFiles = append(allFiles, pFiles...)
+		} else {
+			return []string{fmt.Sprintf("parent rom missing: %s", parent)}, parentLabel
+		}
+	}
+
+	return validateRomArchive(&dat.Game{Name: def.Name, Roms: def.Roms}, allFiles), parentLabel
 }
 
 func normalizeExts(exts string) (map[string]struct{}, error) {
@@ -282,4 +323,19 @@ func normalizeExts(exts string) (map[string]struct{}, error) {
 		return nil, errors.New("invalid ext value")
 	}
 	return result, nil
+}
+
+func openArchive(path string) ([]*zip.File, io.Closer, error) {
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return zr.File, zr, nil
+}
+
+func romFileName(rom dat.Rom) string {
+	if trimmed := strings.TrimSpace(rom.Merge); trimmed != "" {
+		return trimmed
+	}
+	return rom.Name
 }
