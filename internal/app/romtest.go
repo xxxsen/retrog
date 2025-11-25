@@ -23,6 +23,7 @@ type RomTestCommand struct {
 	filePath string
 	dirPath  string
 	exts     string
+	biosDir  string
 }
 
 type romDefinition struct {
@@ -45,6 +46,7 @@ func (c *RomTestCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.filePath, "file", "", "待验证的压缩包文件路径")
 	f.StringVar(&c.dirPath, "dir", "", "待验证的压缩包目录，递归扫描")
 	f.StringVar(&c.exts, "ext", "zip,7z", "扫描扩展名，逗号分隔，例如 zip,7z")
+	f.StringVar(&c.biosDir, "bios", "", "BIOS 目录，用于补全 romof/clone 依赖")
 }
 
 func (c *RomTestCommand) PreRun(ctx context.Context) error {
@@ -69,6 +71,7 @@ func (c *RomTestCommand) PreRun(ctx context.Context) error {
 		zap.String("kind", c.kind),
 		zap.String("file", c.filePath),
 		zap.String("dir", c.dirPath),
+		zap.String("bios_dir", c.biosDir),
 		zap.String("exts", c.exts),
 	)
 	return nil
@@ -82,7 +85,12 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 		return err
 	}
 
-	targets, err := c.collectTargets()
+	allowed, err := normalizeExts(c.exts)
+	if err != nil {
+		return err
+	}
+
+	targets, err := c.collectTargets(allowed)
 	if err != nil {
 		return err
 	}
@@ -90,6 +98,15 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 	nameToPath := make(map[string]string, len(targets))
 	for _, t := range targets {
 		nameToPath[strings.ToLower(deriveGameName(t))] = t
+	}
+	if biosMap, err := c.collectBiosPaths(allowed); err == nil {
+		for name, path := range biosMap {
+			if _, exists := nameToPath[name]; !exists {
+				nameToPath[name] = path
+			}
+		}
+	} else {
+		logger.Warn("collect bios paths failed", zap.Error(err))
 	}
 
 	failCount := 0
@@ -203,7 +220,8 @@ func (c *RomTestCommand) loadRomDefinitions() (map[string]romDefinition, error) 
 			return nil, err
 		}
 		for _, game := range df.Games {
-			result[game.Name] = romDefinition{Name: game.Name, Parent: strings.TrimSpace(game.CloneOf), Roms: game.Roms}
+			parent := strings.TrimSpace(game.RomOf)
+			result[game.Name] = romDefinition{Name: game.Name, Parent: parent, Roms: game.Roms}
 		}
 	case "mame":
 		parser := dat.NewMameParser()
@@ -212,10 +230,7 @@ func (c *RomTestCommand) loadRomDefinitions() (map[string]romDefinition, error) 
 			return nil, err
 		}
 		for _, machine := range df.Machines {
-			parent := strings.TrimSpace(machine.CloneOf)
-			if parent == "" {
-				parent = strings.TrimSpace(machine.RomOf)
-			}
+			parent := strings.TrimSpace(machine.RomOf)
 			result[machine.Name] = romDefinition{Name: machine.Name, Parent: parent, Roms: machine.Roms}
 		}
 	default:
@@ -224,11 +239,7 @@ func (c *RomTestCommand) loadRomDefinitions() (map[string]romDefinition, error) 
 	return result, nil
 }
 
-func (c *RomTestCommand) collectTargets() ([]string, error) {
-	allowed, err := normalizeExts(c.exts)
-	if err != nil {
-		return nil, err
-	}
+func (c *RomTestCommand) collectTargets(allowed map[string]struct{}) ([]string, error) {
 	var targets []string
 	if strings.TrimSpace(c.filePath) != "" {
 		path := filepath.Clean(c.filePath)
@@ -338,4 +349,31 @@ func romFileName(rom dat.Rom) string {
 		return trimmed
 	}
 	return rom.Name
+}
+
+func (c *RomTestCommand) collectBiosPaths(allowed map[string]struct{}) (map[string]string, error) {
+	if strings.TrimSpace(c.biosDir) == "" {
+		return map[string]string{}, nil
+	}
+	result := make(map[string]string)
+	err := filepath.WalkDir(c.biosDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if len(allowed) > 0 {
+			ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+			if _, ok := allowed[ext]; !ok {
+				return nil
+			}
+		}
+		name := strings.ToLower(deriveGameName(path))
+		if name != "" {
+			result[name] = filepath.Clean(path)
+		}
+		return nil
+	})
+	return result, err
 }

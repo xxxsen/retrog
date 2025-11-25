@@ -191,12 +191,30 @@ func TestCollectTargetsFiltersByExt(t *testing.T) {
 		t.Fatalf("write skipped: %v", err)
 	}
 	cmd := &RomTestCommand{dirPath: dir, exts: "zip"}
-	targets, err := cmd.collectTargets()
+	allowedSet, _ := normalizeExts(cmd.exts)
+	targets, err := cmd.collectTargets(allowedSet)
 	if err != nil {
 		t.Fatalf("collect targets: %v", err)
 	}
 	if len(targets) != 1 || targets[0] != allowed {
 		t.Fatalf("unexpected targets: %v", targets)
+	}
+}
+
+func TestCollectBiosPaths(t *testing.T) {
+	dir := t.TempDir()
+	bios := filepath.Join(dir, "neogeo.zip")
+	if err := os.WriteFile(bios, []byte("bios"), 0o644); err != nil {
+		t.Fatalf("write bios: %v", err)
+	}
+	cmd := &RomTestCommand{biosDir: dir, exts: "zip"}
+	allowedSet, _ := normalizeExts(cmd.exts)
+	paths, err := cmd.collectBiosPaths(allowedSet)
+	if err != nil {
+		t.Fatalf("collect bios paths: %v", err)
+	}
+	if got, ok := paths["neogeo"]; !ok || got != bios {
+		t.Fatalf("unexpected bios map: %v", paths)
 	}
 }
 

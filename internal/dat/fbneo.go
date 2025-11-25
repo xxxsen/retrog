@@ -63,18 +63,19 @@ type ClrMamePro struct {
 
 // Game represents a single ROM set entry.
 type Game struct {
-	Name         string    `xml:"name,attr"`
-	SourceFile   string    `xml:"sourcefile,attr,omitempty"`
-	IsBios       string    `xml:"isbios,attr,omitempty"`
-	CloneOf      string    `xml:"cloneof,attr,omitempty"`
-	Description  string    `xml:"description"`
-	Comment      string    `xml:"comment"`
-	Year         string    `xml:"year"`
-	Manufacturer string    `xml:"manufacturer"`
-	Video        *Video    `xml:"video"`
-	Driver       *Driver   `xml:"driver"`
-	Roms         []Rom     `xml:"rom"`
-	Samples      []Sample  `xml:"sample"`
+	Name         string   `xml:"name,attr"`
+	SourceFile   string   `xml:"sourcefile,attr,omitempty"`
+	IsBios       string   `xml:"isbios,attr,omitempty"`
+	CloneOf      string   `xml:"cloneof,attr,omitempty"`
+	RomOf        string   `xml:"romof,attr,omitempty"`
+	Description  string   `xml:"description"`
+	Comment      string   `xml:"comment"`
+	Year         string   `xml:"year"`
+	Manufacturer string   `xml:"manufacturer"`
+	Video        *Video   `xml:"video"`
+	Driver       *Driver  `xml:"driver"`
+	Roms         []Rom    `xml:"rom"`
+	Samples      []Sample `xml:"sample"`
 }
 
 // Video captures display information for the game.
