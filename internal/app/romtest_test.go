@@ -242,11 +242,11 @@ func TestValidateFile(t *testing.T) {
 		"bad":  "bad.zip",
 	}
 
-	if issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" || parentIsBios || skipped || mismatch || parentMissing || biosCrcMismatch {
-		t.Fatalf("expected no issues, got %v (parent %s, bios %v, skipped %v, mismatch %v, parentMissing %v, biosCrc %v)", issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch)
+	if issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, goodZip); len(issues) != 0 || parent != "" || len(parentChain) != 0 || parentIsBios || skipped || mismatch || parentMissing || biosCrcMismatch {
+		t.Fatalf("expected no issues, got %v (parent %s, chain %v, bios %v, skipped %v, mismatch %v, parentMissing %v, biosCrc %v)", issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch)
 	}
 	nameToPath["bad"] = badZip
-	if issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" || parentIsBios || skipped || mismatch || parentMissing || biosCrcMismatch {
+	if issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, badZip); len(issues) == 0 || parent != "" || len(parentChain) != 0 || parentIsBios || skipped || mismatch || parentMissing || biosCrcMismatch {
 		t.Fatalf("expected issues for bad zip")
 	}
 }
@@ -265,8 +265,8 @@ func TestValidateFileParentMissing(t *testing.T) {
 	}
 	cmd := &RomTestCommand{}
 	nameToPath := map[string]string{"child": childZip}
-	if issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || parentIsBios || !parentMissing || skipped || mismatch || biosCrcMismatch {
-		t.Fatalf("expected parent missing success with tag, got %v (parent %s, bios %v, skipped %v, mismatch %v, parentMissing %v, biosCrc %v)", issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch)
+	if issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || len(parentChain) == 0 || parentIsBios || !parentMissing || skipped || mismatch || biosCrcMismatch {
+		t.Fatalf("expected parent missing success with tag, got %v (parent %s, chain %v, bios %v, skipped %v, mismatch %v, parentMissing %v, biosCrc %v)", issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch)
 	}
 
 	parentZip := filepath.Join(dir, "parent.zip")
@@ -274,8 +274,8 @@ func TestValidateFileParentMissing(t *testing.T) {
 		t.Fatalf("create parent zip: %v", err)
 	}
 	nameToPath["parent"] = parentZip
-	if issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || parentIsBios || skipped || mismatch || parentMissing || biosCrcMismatch {
-		t.Fatalf("expected no issues when parent present, got %v (parent %s, bios %v, skipped %v, mismatch %v, parentMissing %v, biosCrc %v)", issues, parent, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch)
+	if issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch := cmd.validateFile(defs, nameToPath, childZip); len(issues) != 0 || parent == "" || len(parentChain) < 1 || parentIsBios || skipped || mismatch || parentMissing || biosCrcMismatch {
+		t.Fatalf("expected no issues when parent present, got %v (parent %s, chain %v, bios %v, skipped %v, mismatch %v, parentMissing %v, biosCrc %v)", issues, parent, parentChain, parentIsBios, skipped, mismatch, parentMissing, biosCrcMismatch)
 	}
 }
 

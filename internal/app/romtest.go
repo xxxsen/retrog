@@ -112,10 +112,14 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 
 	failCount := 0
 	for _, target := range targets {
-		issues, parentPath, parentIsBios, skippedOptional, nameMismatch, parentMissing, biosCrcMismatch := c.validateFile(lookup, nameToPath, target)
+		issues, parentPath, parentChain, parentIsBios, skippedOptional, nameMismatch, parentMissing, biosCrcMismatch := c.validateFile(lookup, nameToPath, target)
 		label := target
 		if strings.TrimSpace(parentPath) != "" {
-			parentBase := filepath.Base(parentPath)
+			var names []string
+			for _, p := range parentChain {
+				names = append(names, filepath.Base(p))
+			}
+			parentBase := strings.Join(names, " <- ")
 			labelType := "parent"
 			if parentIsBios {
 				labelType = "bios"
@@ -340,11 +344,11 @@ func (c *RomTestCommand) collectTargets(allowed map[string]struct{}) ([]string, 
 	return targets, nil
 }
 
-func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, bool, bool, bool, bool, bool) {
+func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPath map[string]string, path string) ([]string, string, []string, bool, bool, bool, bool, bool) {
 	gameName := deriveGameName(path)
 	def, ok := lookup[gameName]
 	if !ok {
-		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", false, false, false, false, false
+		return []string{fmt.Sprintf("game %s not found in dat", gameName)}, "", nil, false, false, false, false, false
 	}
 
 	var closers []io.Closer
@@ -356,32 +360,43 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 
 	files, closer, err := openArchive(path)
 	if err != nil {
-		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", false, false, false, false, false
+		return []string{fmt.Sprintf("open archive %s: %v", path, err)}, "", nil, false, false, false, false, false
 	}
 	closers = append(closers, closer)
 	allFiles := append([]*zip.File{}, files...)
 	parentLabel := ""
+	parentChainPaths := []string{}
 	parentIsBios := false
 	skippedOptional := false
 	nameMismatch := false
 	parentMissing := false
+	parentBiosCrcMismatch := false
 
-	parent := strings.TrimSpace(def.Parent)
-	if parent != "" {
-		parentLabel = parent + ".zip"
-		if parentPath, ok := nameToPath[strings.ToLower(parent)]; ok {
+	parentChain := c.parentChain(def, lookup)
+	if len(parentChain) > 0 {
+		parentLabel = parentChain[0] + ".zip"
+	}
+	for idx, parent := range parentChain {
+		parentPath := parent + ".zip"
+		if actualPath, ok := nameToPath[strings.ToLower(parent)]; ok {
+			parentPath = actualPath
+		} else {
+			parentMissing = true
+		}
+		parentChainPaths = append(parentChainPaths, parentPath)
+		if idx == 0 {
 			parentLabel = parentPath
-			if c.isBiosPath(parentPath) {
-				parentIsBios = true
-			}
+		}
+		if c.isBiosPath(parentPath) {
+			parentIsBios = true
+		}
+		if !parentMissing {
 			pFiles, pCloser, err := openArchive(parentPath)
 			if err != nil {
-				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, parentIsBios, false, false, false, false
+				return []string{fmt.Sprintf("open parent archive %s: %v", parent, err)}, parentLabel, parentChainPaths, parentIsBios, false, false, false, false
 			}
 			closers = append(closers, pCloser)
 			allFiles = append(allFiles, pFiles...)
-		} else {
-			parentMissing = true
 		}
 	}
 
@@ -393,7 +408,8 @@ func (c *RomTestCommand) validateFile(lookup map[string]romDefinition, nameToPat
 		biosCrcMismatch = true
 		issues = nil
 	}
-	return issues, parentLabel, parentIsBios, skippedOptional, nameMismatch, parentMissing, biosCrcMismatch
+	parentBiosCrcMismatch = biosCrcMismatch && parentIsBios
+	return issues, parentLabel, parentChainPaths, parentIsBios, skippedOptional, nameMismatch, parentMissing, parentBiosCrcMismatch
 }
 
 func normalizeExts(exts string) (map[string]struct{}, error) {
@@ -514,4 +530,24 @@ func allCrcMismatch(issues []string) bool {
 		}
 	}
 	return len(issues) > 0
+}
+
+func (c *RomTestCommand) parentChain(def romDefinition, lookup map[string]romDefinition) []string {
+	seen := make(map[string]struct{})
+	var chain []string
+	parent := strings.TrimSpace(def.Parent)
+	for parent != "" {
+		lower := strings.ToLower(parent)
+		if _, exists := seen[lower]; exists {
+			break
+		}
+		seen[lower] = struct{}{}
+		chain = append(chain, parent)
+		next, ok := lookup[parent]
+		if !ok {
+			break
+		}
+		parent = strings.TrimSpace(next.Parent)
+	}
+	return chain
 }
