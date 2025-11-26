@@ -273,6 +273,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger.Info("starting rom check (may take a while)")
 	if err := c.applyRomChecks(ctx, collections); err != nil {
 		return err
 	}
@@ -359,6 +360,11 @@ func (c *WebCommand) prepareDatPaths(ctx context.Context) error {
 		if !info.IsDir() {
 			return fmt.Errorf("bios is not a directory: %s", c.biosDir)
 		}
+	} else {
+		logger.Info("bios directory not provided; rom check will skip parent/bios completion")
+	}
+	if datRoot == "" && c.fbneoDat == "" && c.mameDat == "" {
+		logger.Info("dat directory not provided; rom check will be skipped. Provide --dat to enable fbneo/mame validation.")
 	}
 	return nil
 }
