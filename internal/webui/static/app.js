@@ -1146,6 +1146,7 @@
           row.className = "rominfo-grid-item";
           const name = document.createElement("span");
           name.textContent = item.name || item.merge_name || "";
+          name.title = item.name || item.merge_name || "";
           const crc = document.createElement("span");
           crc.textContent = item.crc || "";
           const size = document.createElement("span");
@@ -1170,6 +1171,7 @@
           row.className = "rominfo-grid-item";
           const name = document.createElement("span");
           name.textContent = s.name || s.merge_name || "";
+          name.title = s.name || s.merge_name || "";
           const crc = document.createElement("span");
           crc.textContent = s.crc || "";
           const size = document.createElement("span");
@@ -1179,6 +1181,7 @@
           state.textContent = s.state_emoji || "";
           const msg = document.createElement("span");
           msg.textContent = s.message || "";
+          msg.title = s.message || "";
           row.appendChild(name);
           row.appendChild(crc);
           row.appendChild(size);

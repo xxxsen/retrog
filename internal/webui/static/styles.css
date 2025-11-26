@@ -522,20 +522,43 @@ button:disabled {
 
 .rominfo-panels {
   display: grid;
-  grid-template-columns: minmax(220px, 0.9fr) minmax(320px, 1.4fr);
+  grid-template-columns: minmax(200px, 0.8fr) minmax(360px, 1.6fr);
   gap: 12px;
 }
 
 .rominfo-card.scrollable {
   max-height: 320px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
 }
 
 .rominfo-card h4 {
   margin: 0;
   font-size: 14px;
   color: var(--text-main);
+}
+
+.rominfo-grid-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px;
+  background: #0f1724;
+  border-bottom: 1px solid var(--border);
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  align-items: center;
+}
+
+.rominfo-grid-header.rominfo-grid-3 {
+  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px);
+}
+
+.rominfo-grid-header.rominfo-grid-5 {
+  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px) minmax(50px, 70px) minmax(200px, 3fr);
 }
 
 .rominfo-list {
@@ -601,6 +624,13 @@ button:disabled {
   gap: 6px;
 }
 
+.rominfo-scroll-body {
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
 .rominfo-grid-item {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -614,11 +644,11 @@ button:disabled {
 }
 
 .rominfo-grid-3 .rominfo-grid-item {
-  grid-template-columns: 1fr 0.8fr 0.8fr;
+  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px);
 }
 
 .rominfo-grid-5 .rominfo-grid-item {
-  grid-template-columns: 1.4fr 0.8fr 0.8fr 0.4fr 1.2fr;
+  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px) minmax(50px, 70px) minmax(200px, 3fr);
 }
 
 .rominfo-grid-item span {
@@ -628,6 +658,11 @@ button:disabled {
 }
 
 .rominfo-grid-item .rominfo-emoji {
+  text-align: center;
+}
+
+.rominfo-grid-5 .rominfo-grid-item span:nth-child(4),
+.rominfo-grid-header.rominfo-grid-5 span:nth-child(4) {
   text-align: center;
 }
 

@@ -215,11 +215,27 @@
         <div class="rominfo-panels">
           <div class="rominfo-card scrollable">
             <h4>当前 ROM 信息</h4>
-            <div id="rominfo-current-subroms" class="rominfo-grid rominfo-grid-3"></div>
+            <div class="rominfo-grid-header rominfo-grid-3">
+              <span>文件名</span>
+              <span>CRC32</span>
+              <span>大小</span>
+            </div>
+            <div class="rominfo-scroll-body">
+              <div id="rominfo-current-subroms" class="rominfo-grid rominfo-grid-3"></div>
+            </div>
           </div>
           <div class="rominfo-card scrollable">
             <h4>Dat 子 ROM 状态</h4>
-            <div id="rominfo-subroms" class="rominfo-grid rominfo-grid-5"></div>
+            <div class="rominfo-grid-header rominfo-grid-5">
+              <span>文件名</span>
+              <span>CRC32</span>
+              <span>大小</span>
+              <span>状态</span>
+              <span>原因</span>
+            </div>
+            <div class="rominfo-scroll-body">
+              <div id="rominfo-subroms" class="rominfo-grid rominfo-grid-5"></div>
+            </div>
           </div>
         </div>
         <div id="rominfo-status" class="edit-status"></div>
