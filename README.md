@@ -14,4 +14,8 @@ go install github.com/xxxsen/retrog/cmd/retrog@latest
 retrog web --dir=/path/to/rom/dir
 ```
 
+## 截图
+
+![HOME](./screenshots/full.png)
+
 Powered by Codex
