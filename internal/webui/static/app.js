@@ -36,6 +36,14 @@
   const editClose = document.getElementById("edit-close");
   const editStatus = document.getElementById("edit-status");
   const collectionSearchInput = document.getElementById("collection-search-input");
+  const romInfoButton = document.getElementById("show-rom-info");
+  const romInfoModal = document.getElementById("rominfo-modal");
+  const romInfoClose = document.getElementById("rominfo-close");
+  const romInfoSelect = document.getElementById("rominfo-select");
+  const romInfoFiles = document.getElementById("rominfo-files");
+  const romInfoSubroms = document.getElementById("rominfo-subroms");
+  const romInfoStatus = document.getElementById("rominfo-status");
+  const romInfoCurrentSubroms = document.getElementById("rominfo-current-subroms");
   const INDEX_FIELD_KEY = "x-index-id";
   const COLLECTION_FIELD_CONFIG = [
     { id: "collection-x-index-id", key: "x-index-id", readonly: true },
@@ -94,6 +102,7 @@
   let removedFields = [];
   let editContext = null;
   let collectionEditContext = null;
+  let romInfoData = null;
   const collectionExtensions = new Map();
   const MULTILINE_TEXT_KEYS = new Set(["description", "summary", "desc"]);
 
@@ -539,6 +548,10 @@
       missingFlag.textContent = "⛔";
       nameLine.appendChild(missingFlag);
     }
+    const status = document.createElement("span");
+    status.className = "game-status";
+    status.textContent = game?.rom_status_emoji || "🔘";
+    nameLine.appendChild(status);
     const pathLine = document.createElement("div");
     pathLine.className = "game-path-line";
     pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
@@ -1001,6 +1014,182 @@
     setDeleteStatus("");
   }
 
+  function closeRomInfoModal() {
+    if (romInfoModal) {
+      romInfoModal.classList.add("hidden");
+    }
+    setRomInfoStatus("");
+    romInfoData = null;
+    resetRomInfoDisplay();
+  }
+
+  async function loadRomInfo(romPathOverride = "") {
+    const context = getCurrentSelectionContext();
+    if (!context) {
+      setRomInfoStatus("请选择需要查看的游戏", true);
+      if (romInfoModal) {
+        romInfoModal.classList.remove("hidden");
+      }
+      return;
+    }
+    const params = new URLSearchParams({
+      metadata_path: context.metadata_path,
+      x_index_id: context.x_index_id,
+    });
+    if (romPathOverride) {
+      params.append("rom_path", romPathOverride);
+    }
+    try {
+      resetRomInfoDisplay();
+      setRomInfoStatus("加载中...");
+      if (romInfoModal) {
+        romInfoModal.classList.remove("hidden");
+      }
+      const res = await fetch(`/api/games/rominfo?${params.toString()}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "获取 ROM 信息失败");
+      }
+      const data = await res.json();
+      romInfoData = data;
+      renderRomInfo(data);
+      setRomInfoStatus("");
+    } catch (err) {
+      setRomInfoStatus(err.message || "获取 ROM 信息失败", true);
+      if (romInfoModal) {
+        romInfoModal.classList.remove("hidden");
+      }
+    }
+  }
+
+  function resetRomInfoDisplay() {
+    if (romInfoSelect) {
+      romInfoSelect.innerHTML = "";
+    }
+    if (romInfoFiles) {
+      romInfoFiles.innerHTML = "";
+    }
+    if (romInfoCurrentSubroms) {
+      romInfoCurrentSubroms.innerHTML = "";
+    }
+    if (romInfoSubroms) {
+      romInfoSubroms.innerHTML = "";
+    }
+  }
+
+  function renderRomInfo(data) {
+    if (!data) {
+      return;
+    }
+    if (romInfoSelect) {
+      romInfoSelect.innerHTML = "";
+      const files = Array.isArray(data.rom_files) ? data.rom_files : [];
+      files.forEach((path) => {
+        const opt = document.createElement("option");
+        opt.value = path;
+        opt.textContent = path ? path.split("/").pop() : path;
+        if (data.selected_rom && data.selected_rom === path) {
+          opt.selected = true;
+        }
+        romInfoSelect.appendChild(opt);
+      });
+    }
+    if (romInfoFiles) {
+      romInfoFiles.innerHTML = "";
+      const statusLine = document.createElement("div");
+      statusLine.textContent = `状态: ${data.emoji || "🔘"} ${data.status || ""}`;
+      romInfoFiles.appendChild(statusLine);
+      if (data.core) {
+        const coreLine = document.createElement("div");
+        coreLine.textContent = `核心: ${data.core}`;
+        romInfoFiles.appendChild(coreLine);
+      }
+      const countLine = document.createElement("div");
+      countLine.textContent = `子ROM数量: ${Number.isFinite(Number(data.subrom_count)) ? data.subrom_count : "未知"}`;
+      romInfoFiles.appendChild(countLine);
+      const datCountLine = document.createElement("div");
+      datCountLine.textContent = `Dat子ROM数量: ${
+        Number.isFinite(Number(data.dat_subrom_count)) ? data.dat_subrom_count : "未知"
+      }`;
+      romInfoFiles.appendChild(datCountLine);
+      if (Array.isArray(data.parents) && data.parents.length) {
+        const parentLine = document.createElement("div");
+        const labels = data.parents.map((p) => {
+          const name = p.name || p.Name || "未知";
+          const existText = p.exist || p.Exist ? "" : "(缺失)";
+          return `${name}${existText}`;
+        });
+        parentLine.textContent = `父/BIOS: ${labels.join(" / ")}`;
+        romInfoFiles.appendChild(parentLine);
+      }
+      if (data.rel_rom_path || data.rom_path) {
+        const pathLine = document.createElement("div");
+        pathLine.textContent = `路径: ${data.rel_rom_path || data.rom_path}`;
+        romInfoFiles.appendChild(pathLine);
+      }
+      if (data.message) {
+        const msg = document.createElement("div");
+        msg.textContent = data.message;
+        romInfoFiles.appendChild(msg);
+      }
+    }
+    if (romInfoCurrentSubroms) {
+      romInfoCurrentSubroms.innerHTML = "";
+      const list = Array.isArray(data.subrom_files) ? data.subrom_files : [];
+      if (!list.length) {
+        const empty = document.createElement("div");
+        empty.textContent = "暂无子 ROM 文件";
+        romInfoCurrentSubroms.appendChild(empty);
+      } else {
+        list.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "rominfo-grid-item";
+          const name = document.createElement("span");
+          name.textContent = item.name || item.merge_name || "";
+          const crc = document.createElement("span");
+          crc.textContent = item.crc || "";
+          const size = document.createElement("span");
+          size.textContent = Number.isFinite(Number(item.size)) ? item.size : "";
+          row.appendChild(name);
+          row.appendChild(crc);
+          row.appendChild(size);
+          romInfoCurrentSubroms.appendChild(row);
+        });
+      }
+    }
+    if (romInfoSubroms) {
+      romInfoSubroms.innerHTML = "";
+      const subroms = Array.isArray(data.dat_subroms) ? data.dat_subroms : [];
+      if (!subroms.length) {
+        const empty = document.createElement("div");
+        empty.textContent = "暂无 Dat 子 ROM 信息";
+        romInfoSubroms.appendChild(empty);
+      } else {
+        subroms.forEach((s) => {
+          const row = document.createElement("div");
+          row.className = "rominfo-grid-item";
+          const name = document.createElement("span");
+          name.textContent = s.name || s.merge_name || "";
+          const crc = document.createElement("span");
+          crc.textContent = s.crc || "";
+          const size = document.createElement("span");
+          size.textContent = Number.isFinite(Number(s.size)) ? s.size : "";
+          const state = document.createElement("span");
+          state.className = "rominfo-emoji";
+          state.textContent = s.state_emoji || "";
+          const msg = document.createElement("span");
+          msg.textContent = s.message || "";
+          row.appendChild(name);
+          row.appendChild(crc);
+          row.appendChild(size);
+          row.appendChild(state);
+          row.appendChild(msg);
+          romInfoSubroms.appendChild(row);
+        });
+      }
+    }
+  }
+
   function populateEditFields(game) {
     editFields.innerHTML = "";
     const fileField = findFieldByKey(game?.fields, "file") || findFieldByKey(game?.fields, "files");
@@ -1211,12 +1400,21 @@
     collectionStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
   }
 
+  function setRomInfoStatus(message, isError = false) {
+    if (!romInfoStatus) {
+      return;
+    }
+    romInfoStatus.textContent = message || "";
+    romInfoStatus.style.color = isError ? "#ff8a8a" : "var(--text-muted)";
+  }
+
   function updateActionButtons() {
     const context = getCurrentSelectionContext();
     const hasSelection = Boolean(context);
     const isMissing = context ? isMissingGame(context.game) : false;
     const disableEdit = !hasSelection || isMissing;
     const disableDelete = !hasSelection || isMissing;
+    const disableRomInfo = !hasSelection;
     if (editButton) {
       editButton.disabled = disableEdit;
       editButton.classList.toggle("disabled", disableEdit);
@@ -1226,6 +1424,10 @@
       deleteButton.disabled = disableDelete;
       deleteButton.classList.toggle("disabled", disableDelete);
       deleteButton.title = isMissing ? "缺失 ROM 的游戏仅支持查看" : "";
+    }
+    if (romInfoButton) {
+      romInfoButton.disabled = disableRomInfo;
+      romInfoButton.classList.toggle("disabled", disableRomInfo);
     }
   }
 
@@ -1467,6 +1669,31 @@
       renderCollections();
       renderFields();
       renderMedia();
+    });
+  }
+
+  if (romInfoButton) {
+    romInfoButton.addEventListener("click", () => {
+      loadRomInfo();
+    });
+  }
+
+  if (romInfoClose) {
+    romInfoClose.addEventListener("click", closeRomInfoModal);
+  }
+
+  if (romInfoModal) {
+    romInfoModal.addEventListener("click", (event) => {
+      if (event.target === romInfoModal) {
+        closeRomInfoModal();
+      }
+    });
+  }
+
+  if (romInfoSelect) {
+    romInfoSelect.addEventListener("change", (event) => {
+      const value = event.target.value || "";
+      loadRomInfo(value);
     });
   }
 

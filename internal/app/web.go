@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -20,24 +21,35 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bodgit/sevenzip"
 	"github.com/google/shlex"
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"github.com/xxxsen/retrog/internal/constant"
+	"github.com/xxxsen/retrog/internal/dat"
 	"github.com/xxxsen/retrog/internal/metadata"
+	"github.com/xxxsen/retrog/internal/sdk"
 	"github.com/xxxsen/retrog/internal/webui"
 	"go.uber.org/zap"
 )
 
 type WebCommand struct {
-	dir         string
-	root        string
-	bind        string
-	uploadDir   string
-	server      *http.Server
-	assets      *assetStore
-	collections []*collectionPayload
-	dataMu      sync.RWMutex
+	dir             string
+	root            string
+	bind            string
+	fbneoDat        string
+	mameDat         string
+	biosDir         string
+	uploadDir       string
+	server          *http.Server
+	assets          *assetStore
+	collections     []*collectionPayload
+	dataMu          sync.RWMutex
+	romMu           sync.RWMutex
+	romStatusByGame map[string]*romStatusSummary
+	romStatusByPath map[string]*romStatusSummary
+	defsFBNeo       map[string]romDefInfo
+	defsMame        map[string]romDefInfo
 }
 
 type collectionPayload struct {
@@ -68,6 +80,8 @@ type gamePayload struct {
 	DisplayName string          `json:"display_name"`
 	SortKey     string          `json:"sort_key"`
 	RomMissing  bool            `json:"rom_missing"`
+	RomStatus   string          `json:"rom_status"`
+	RomEmoji    string          `json:"rom_status_emoji"`
 	HasBoxArt   bool            `json:"has_boxart"`
 	HasVideo    bool            `json:"has_video"`
 	Fields      []*fieldPayload `json:"fields"`
@@ -84,6 +98,26 @@ type assetPayload struct {
 	Type     string `json:"type"`
 	URL      string `json:"url"`
 	FileName string `json:"file_name"`
+}
+
+type romStatus string
+
+const (
+	romStatusGreen     romStatus = "green"
+	romStatusYellow    romStatus = "yellow"
+	romStatusRed       romStatus = "red"
+	romStatusNotTested romStatus = "not_tested"
+)
+
+type romStatusSummary struct {
+	Status romStatus
+	Emoji  string
+	Result *sdk.RomFileTestResult
+}
+
+type romDefInfo struct {
+	Parent string
+	IsBios bool
 }
 
 const xIndexEntryKey = "x-index-id"
@@ -138,6 +172,45 @@ type deleteGameResponse struct {
 	Collection *collectionPayload `json:"collection"`
 }
 
+type romInfoResponse struct {
+	Status      string            `json:"status"`
+	Emoji       string            `json:"emoji"`
+	RomPath     string            `json:"rom_path"`
+	RelRomPath  string            `json:"rel_rom_path"`
+	Core        string            `json:"core"`
+	SubRomCount int               `json:"subrom_count"`
+	DatSubCount int               `json:"dat_subrom_count"`
+	Parents     []parentPayload   `json:"parents,omitempty"`
+	SubRomFiles []*subRomFileInfo `json:"subrom_files,omitempty"`
+	DatSubRoms  []*subRomPayload  `json:"dat_subroms,omitempty"`
+	RomFiles    []string          `json:"rom_files,omitempty"`
+	SelectedRom string            `json:"selected_rom,omitempty"`
+	Message     string            `json:"message,omitempty"`
+}
+
+type parentPayload struct {
+	Name   string `json:"name"`
+	Exist  bool   `json:"exist"`
+	IsBios bool   `json:"is_bios"`
+}
+
+type subRomFileInfo struct {
+	Name      string `json:"name"`
+	MergeName string `json:"merge_name,omitempty"`
+	Size      int64  `json:"size"`
+	CRC       string `json:"crc,omitempty"`
+}
+
+type subRomPayload struct {
+	Name       string `json:"name"`
+	MergeName  string `json:"merge_name,omitempty"`
+	Size       int64  `json:"size"`
+	CRC        string `json:"crc,omitempty"`
+	State      string `json:"state"`
+	StateEmoji string `json:"state_emoji"`
+	Message    string `json:"message,omitempty"`
+}
+
 type assetStore struct {
 	root  string
 	extra []string
@@ -156,6 +229,9 @@ func (c *WebCommand) Desc() string {
 func (c *WebCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dir, "dir", "", "ROM 根目录")
 	f.StringVar(&c.bind, "bind", ":8080", "HTTP 监听地址，例如 0.0.0.0:8080")
+	f.StringVar(&c.fbneoDat, "fbneo_dat", "", "fbneo DAT 文件路径，用于校验 ROM")
+	f.StringVar(&c.mameDat, "mame_dat", "", "mame DAT 文件路径，用于校验 ROM")
+	f.StringVar(&c.biosDir, "bios", "", "BIOS 目录，用于 rom 校验父/依赖")
 }
 
 func (c *WebCommand) PreRun(ctx context.Context) error {
@@ -173,6 +249,9 @@ func (c *WebCommand) PreRun(ctx context.Context) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a directory", c.root)
+	}
+	if err := c.prepareDatPaths(ctx); err != nil {
+		return err
 	}
 	store, err := newAssetStore(c.root)
 	if err != nil {
@@ -194,6 +273,9 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := c.applyRomChecks(ctx, collections); err != nil {
+		return err
+	}
 	c.setCollections(collections)
 	logger.Info("metadata loaded",
 		zap.Int("collection_count", len(collections)))
@@ -212,6 +294,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/games/upload", c.handleUploadMedia)
 	mux.HandleFunc("/api/games/create", c.handleCreateGame)
 	mux.HandleFunc("/api/games/delete", c.handleDeleteGame)
+	mux.HandleFunc("/api/games/rominfo", c.handleRomInfo)
 
 	srv := &http.Server{
 		Addr:    c.bind,
@@ -235,6 +318,42 @@ func (c *WebCommand) PostRun(ctx context.Context) error {
 	}
 	if c.uploadDir != "" {
 		_ = os.RemoveAll(c.uploadDir)
+	}
+	return nil
+}
+
+func (c *WebCommand) prepareDatPaths(ctx context.Context) error {
+	logger := logutil.GetLogger(ctx)
+	needBios := false
+	if strings.TrimSpace(c.fbneoDat) != "" {
+		needBios = true
+		if _, err := os.Stat(c.fbneoDat); err != nil {
+			logger.Warn("fbneo dat not found, skip fbneo rom check", zap.String("fbneo_dat", c.fbneoDat), zap.Error(err))
+			c.fbneoDat = ""
+		} else {
+			c.defsFBNeo, _ = loadRomDefsFromFBNeo(c.fbneoDat)
+		}
+	}
+	if strings.TrimSpace(c.mameDat) != "" {
+		needBios = true
+		if _, err := os.Stat(c.mameDat); err != nil {
+			logger.Warn("mame dat not found, skip mame rom check", zap.String("mame_dat", c.mameDat), zap.Error(err))
+			c.mameDat = ""
+		} else {
+			c.defsMame, _ = loadRomDefsFromMame(c.mameDat)
+		}
+	}
+	if needBios && strings.TrimSpace(c.biosDir) == "" {
+		return errors.New("bios directory is required when fbneo_dat or mame_dat is provided")
+	}
+	if strings.TrimSpace(c.biosDir) != "" {
+		info, err := os.Stat(c.biosDir)
+		if err != nil {
+			return fmt.Errorf("bios directory error: %w", err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("bios is not a directory: %s", c.biosDir)
+		}
 	}
 	return nil
 }
@@ -451,6 +570,69 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func (c *WebCommand) handleRomInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	meta := r.URL.Query().Get("metadata_path")
+	xIndexStr := r.URL.Query().Get("x_index_id")
+	xIndexID, err := strconv.Atoi(strings.TrimSpace(xIndexStr))
+	if err != nil || xIndexID <= 0 {
+		http.Error(w, "invalid x_index_id", http.StatusBadRequest)
+		return
+	}
+	metadataPath, err := c.resolveMetadataPath(meta)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	coll, game := c.findGamePayload(filepath.ToSlash(metadataPath), xIndexID)
+	if coll == nil || game == nil {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+	fileCandidates := collectGameFileValues(game)
+	resolvedFiles := resolveRomFileList(metadataPath, fileCandidates)
+	selected := strings.TrimSpace(r.URL.Query().Get("rom_path"))
+	selectedPath := pickRomPath(metadataPath, resolvedFiles, selected)
+	if selectedPath == "" && strings.TrimSpace(game.RomPath) != "" {
+		selectedPath = filepath.ToSlash(game.RomPath)
+		if len(resolvedFiles) == 0 {
+			resolvedFiles = append(resolvedFiles, selectedPath)
+		}
+	}
+	summary := c.romStatusForPath(selectedPath)
+	if summary == nil {
+		summary = c.romStatusForGame(metadataPath, xIndexID)
+	}
+	if (summary == nil || summary.Result == nil || len(summary.Result.ParentList) == 0) && metadataPath != "" && xIndexID > 0 {
+		if fallback := c.romStatusForGame(metadataPath, xIndexID); fallback != nil {
+			if summary == nil || summary.Result == nil || len(summary.Result.ParentList) == 0 {
+				summary = fallback
+			}
+		}
+	}
+	if summary != nil && summary.Result != nil && len(summary.Result.ParentList) == 0 {
+		romName := romNameFromPath(selectedPath)
+		parents := c.parentChainFromDefs(coll.Core, romName)
+		if len(parents) > 0 {
+			summary = &romStatusSummary{
+				Status: summary.Status,
+				Emoji:  summary.Emoji,
+				Result: &sdk.RomFileTestResult{
+					ParentList: parents,
+				},
+			}
+		}
+	}
+
+	entries, _ := listArchiveEntries(selectedPath)
+	resp := buildRomInfoResponse(coll, game, selectedPath, resolvedFiles, summary, entries, c.root)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 func (c *WebCommand) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -537,8 +719,22 @@ func (c *WebCommand) reloadCollections(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	c.applyStoredRomStatus(cols)
 	c.setCollections(cols)
 	return nil
+}
+
+func (c *WebCommand) applyStoredRomStatus(cols []*collectionPayload) {
+	for _, coll := range cols {
+		for _, game := range coll.Games {
+			status := c.romStatusForGame(coll.MetadataPath, game.XIndexID)
+			if status == nil {
+				status = &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
+			}
+			game.RomStatus = string(status.Status)
+			game.RomEmoji = status.Emoji
+		}
+	}
 }
 
 func (c *WebCommand) findGamePayload(metadataPath string, xIndexID int) (*collectionPayload, *gamePayload) {
@@ -666,6 +862,180 @@ func loadCollections(ctx context.Context, root string, store *assetStore) ([]*co
 		}
 	}
 	return result, nil
+}
+
+func (c *WebCommand) applyRomChecks(ctx context.Context, cols []*collectionPayload) error {
+	logger := logutil.GetLogger(ctx)
+	c.romMu.Lock()
+	c.romStatusByGame = make(map[string]*romStatusSummary)
+	c.romStatusByPath = make(map[string]*romStatusSummary)
+	c.romMu.Unlock()
+
+	testers := make(map[string]sdk.IRomTestSDK)
+	if strings.TrimSpace(c.fbneoDat) != "" {
+		t, err := sdk.NewFBNeoTestSDK(c.fbneoDat)
+		if err != nil {
+			return fmt.Errorf("init fbneo tester: %w", err)
+		}
+		testers["fbneo"] = t
+	}
+	if strings.TrimSpace(c.mameDat) != "" {
+		t, err := sdk.NewMameTestSDK(c.mameDat)
+		if err != nil {
+			return fmt.Errorf("init mame tester: %w", err)
+		}
+		testers["mame"] = t
+	}
+	if len(testers) == 0 {
+		c.applyDefaultRomStatus(cols)
+		logger.Info("rom check skipped (no dat provided)")
+		return nil
+	}
+
+	resultsByFamily := make(map[string]map[string]*romStatusSummary)
+	for family, tester := range testers {
+		exts := collectFamilyExtensions(cols, family)
+		res, err := tester.TestDir(stdContextAdapter{ctx}, c.root, c.biosDir, exts)
+		if err != nil {
+			return fmt.Errorf("rom check (%s) failed: %w", family, err)
+		}
+		familyMap := make(map[string]*romStatusSummary)
+		for _, item := range res.List {
+			key := normalizeRomPathKey(item.FilePath)
+			summary := summarizeRomResult(item)
+			familyMap[key] = summary
+		}
+		resultsByFamily[family] = familyMap
+		c.romMu.Lock()
+		for k, v := range familyMap {
+			c.romStatusByPath[k] = v
+		}
+		c.romMu.Unlock()
+		logger.Info("rom check completed", zap.String("family", family), zap.Int("count", len(familyMap)))
+	}
+
+	for _, coll := range cols {
+		family := coreFamily(coll.Core)
+		for _, game := range coll.Games {
+			status := &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
+			if family != "" {
+				if m, ok := resultsByFamily[family]; ok {
+					if key := normalizeRomPathKey(game.RomPath); key != "" {
+						if res, ok := m[key]; ok {
+							status = res
+						}
+					}
+				}
+			}
+			game.RomStatus = string(status.Status)
+			game.RomEmoji = status.Emoji
+			c.setRomStatusForGame(coll.MetadataPath, game.XIndexID, status)
+		}
+	}
+	return nil
+}
+
+func (c *WebCommand) applyDefaultRomStatus(cols []*collectionPayload) {
+	for _, coll := range cols {
+		for _, game := range coll.Games {
+			game.RomStatus = string(romStatusNotTested)
+			game.RomEmoji = "🔘"
+			c.setRomStatusForGame(coll.MetadataPath, game.XIndexID, &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"})
+		}
+	}
+}
+
+func coreFamily(core string) string {
+	core = strings.ToLower(strings.TrimSpace(core))
+	switch {
+	case strings.HasPrefix(core, "fbneo"):
+		return "fbneo"
+	case strings.HasPrefix(core, "mame"):
+		return "mame"
+	default:
+		return ""
+	}
+}
+
+func collectFamilyExtensions(cols []*collectionPayload, family string) []string {
+	seen := make(map[string]struct{})
+	for _, coll := range cols {
+		if coll == nil || coreFamily(coll.Core) != family {
+			continue
+		}
+		for _, ext := range coll.Extensions {
+			n := normalizeExtension(ext)
+			if n == "" {
+				continue
+			}
+			seen[n] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	var out []string
+	for ext := range seen {
+		out = append(out, ext)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func summarizeRomResult(item *sdk.RomFileTestResult) *romStatusSummary {
+	if item == nil {
+		return &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
+	}
+	total := len(item.GreenSubRomResultList) + len(item.YellowSubRomResultList) + len(item.RedSubRomResultList)
+	red := len(item.RedSubRomResultList)
+	switch {
+	case total == 0:
+		return &romStatusSummary{Status: romStatusGreen, Emoji: "🟢", Result: item}
+	case red == 0 && len(item.YellowSubRomResultList) == 0:
+		return &romStatusSummary{Status: romStatusGreen, Emoji: "🟢", Result: item}
+	case red*2 < total:
+		return &romStatusSummary{Status: romStatusYellow, Emoji: "🟡", Result: item}
+	default:
+		return &romStatusSummary{Status: romStatusRed, Emoji: "🔴", Result: item}
+	}
+}
+
+func normalizeRomPathKey(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return ""
+	}
+	return strings.ToLower(filepath.ToSlash(filepath.Clean(p)))
+}
+
+func buildGameKey(metadataPath string, xIndexID int) string {
+	return fmt.Sprintf("%s#%d", filepath.ToSlash(metadataPath), xIndexID)
+}
+
+func (c *WebCommand) setRomStatusForGame(metadataPath string, xIndexID int, status *romStatusSummary) {
+	if status == nil {
+		status = &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
+	}
+	key := buildGameKey(metadataPath, xIndexID)
+	c.romMu.Lock()
+	if c.romStatusByGame == nil {
+		c.romStatusByGame = make(map[string]*romStatusSummary)
+	}
+	c.romStatusByGame[key] = status
+	c.romMu.Unlock()
+}
+
+func (c *WebCommand) romStatusForGame(metadataPath string, xIndexID int) *romStatusSummary {
+	key := buildGameKey(metadataPath, xIndexID)
+	c.romMu.RLock()
+	defer c.romMu.RUnlock()
+	return c.romStatusByGame[key]
+}
+
+func (c *WebCommand) romStatusForPath(path string) *romStatusSummary {
+	key := normalizeRomPathKey(path)
+	c.romMu.RLock()
+	defer c.romMu.RUnlock()
+	return c.romStatusByPath[key]
 }
 
 func ensureCollectionIndexes(doc *metadata.Document) (bool, error) {
@@ -1792,6 +2162,301 @@ func romFileExists(path string) bool {
 	return err == nil
 }
 
+func collectGameFileValues(game *gamePayload) []string {
+	var files []string
+	if game == nil {
+		return files
+	}
+	for _, field := range game.Fields {
+		if field == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(field.Key))
+		if key == "file" || key == "files" {
+			files = append(files, field.Values...)
+		}
+	}
+	return files
+}
+
+func resolveRomFileList(metadataPath string, values []string) []string {
+	metadataDir := filepath.Dir(metadataPath)
+	seen := make(map[string]struct{})
+	var out []string
+	for _, v := range values {
+		abs := resolveRomPath(metadataDir, []string{v})
+		if abs == "" {
+			abs = filepath.Clean(filepath.Join(metadataDir, filepath.FromSlash(v)))
+		}
+		abs = filepath.ToSlash(abs)
+		if strings.TrimSpace(abs) == "" {
+			continue
+		}
+		if _, ok := seen[abs]; ok {
+			continue
+		}
+		seen[abs] = struct{}{}
+		out = append(out, abs)
+	}
+	return out
+}
+
+func pickRomPath(metadataPath string, candidates []string, selected string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	if strings.TrimSpace(selected) != "" {
+		target := normalizeRomPathKey(filepath.Join(filepath.Dir(metadataPath), filepath.FromSlash(selected)))
+		for _, c := range candidates {
+			if normalizeRomPathKey(c) == target {
+				return c
+			}
+		}
+	}
+	return candidates[0]
+}
+
+func buildRomInfoResponse(coll *collectionPayload, game *gamePayload, romPath string, candidates []string, summary *romStatusSummary, archiveEntries []archiveEntry, root string) *romInfoResponse {
+	resp := &romInfoResponse{
+		Status:      string(romStatusNotTested),
+		Emoji:       "🔘",
+		Core:        coll.Core,
+		RomFiles:    make([]string, 0, len(candidates)),
+		SelectedRom: filepath.ToSlash(romPath),
+		RomPath:     filepath.ToSlash(romPath),
+	}
+	for _, c := range candidates {
+		resp.RomFiles = append(resp.RomFiles, filepath.ToSlash(c))
+	}
+	if root != "" && strings.TrimSpace(romPath) != "" {
+		if rel, err := filepath.Rel(root, filepath.FromSlash(romPath)); err == nil {
+			resp.RelRomPath = filepath.ToSlash(rel)
+		}
+	}
+	if summary != nil {
+		resp.Status = string(summary.Status)
+		resp.Emoji = summary.Emoji
+	}
+	if summary == nil || summary.Result == nil {
+		if resp.Status == "" {
+			resp.Status = string(romStatusNotTested)
+			resp.Emoji = "🔘"
+		}
+		resp.SubRomCount = len(resp.SubRomFiles)
+		resp.DatSubCount = 0
+		resp.Message = "未执行 ROM 校验"
+		return resp
+	}
+	resp.Parents = append(resp.Parents, convertParents(summary.Result.ParentList)...)
+	resp.DatSubRoms = append(resp.DatSubRoms, convertSubRomResults("red", summary.Result.RedSubRomResultList)...)
+	resp.DatSubRoms = append(resp.DatSubRoms, convertSubRomResults("yellow", summary.Result.YellowSubRomResultList)...)
+	resp.DatSubRoms = append(resp.DatSubRoms, convertSubRomResults("green", summary.Result.GreenSubRomResultList)...)
+	resp.SubRomFiles = collectArchiveSubRomFiles(archiveEntries)
+	resp.SubRomCount = len(resp.SubRomFiles)
+	resp.DatSubCount = len(resp.DatSubRoms)
+	return resp
+}
+
+func collectArchiveSubRomFiles(entries []archiveEntry) []*subRomFileInfo {
+	if len(entries) == 0 {
+		return nil
+	}
+	var out []*subRomFileInfo
+	for _, e := range entries {
+		out = append(out, &subRomFileInfo{
+			Name: e.Name,
+			Size: int64(e.Size),
+			CRC:  e.CRC,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
+}
+
+func convertSubRomResults(state string, list []*sdk.SubRomFileTestResult) []*subRomPayload {
+	var out []*subRomPayload
+	for _, item := range list {
+		if item == nil || item.SubRom == nil {
+			continue
+		}
+		out = append(out, &subRomPayload{
+			Name:       item.SubRom.Name,
+			MergeName:  item.SubRom.MergeName,
+			Size:       item.SubRom.Size,
+			CRC:        item.SubRom.CRC,
+			State:      state,
+			StateEmoji: subRomStateEmoji(state),
+			Message:    item.TestMessage,
+		})
+	}
+	return out
+}
+
+func subRomStateEmoji(state string) string {
+	switch strings.ToLower(state) {
+	case "green":
+		return "🟢"
+	case "yellow":
+		return "🟡"
+	case "red":
+		return "🔴"
+	default:
+		return "🔘"
+	}
+}
+
+type archiveEntry struct {
+	Name string
+	Size uint64
+	CRC  string
+}
+
+func listArchiveEntries(p string) ([]archiveEntry, error) {
+	if strings.TrimSpace(p) == "" {
+		return nil, nil
+	}
+	ext := strings.ToLower(filepath.Ext(p))
+	switch ext {
+	case ".zip":
+		return listZipEntries(p)
+	case ".7z":
+		return list7zEntries(p)
+	default:
+		return nil, nil
+	}
+}
+
+func listZipEntries(p string) ([]archiveEntry, error) {
+	r, err := zip.OpenReader(p)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	var out []archiveEntry
+	for _, f := range r.File {
+		out = append(out, archiveEntry{
+			Name: f.Name,
+			Size: f.UncompressedSize64,
+			CRC:  fmt.Sprintf("%08x", f.CRC32),
+		})
+	}
+	return out, nil
+}
+
+func list7zEntries(p string) ([]archiveEntry, error) {
+	r, err := sevenzip.OpenReader(p)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	var out []archiveEntry
+	for _, f := range r.File {
+		out = append(out, archiveEntry{
+			Name: f.Name,
+			Size: f.UncompressedSize,
+			CRC:  fmt.Sprintf("%08x", f.CRC32),
+		})
+	}
+	return out, nil
+}
+
+func convertParents(parents []sdk.ParentInfo) []parentPayload {
+	var out []parentPayload
+	for _, p := range parents {
+		out = append(out, parentPayload{
+			Name:   p.Name,
+			Exist:  p.Exist,
+			IsBios: p.IsBios,
+		})
+	}
+	return out
+}
+
+func loadRomDefsFromFBNeo(datPath string) (map[string]romDefInfo, error) {
+	parser := dat.NewParser()
+	df, err := parser.ParseFile(datPath)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]romDefInfo)
+	for _, g := range df.Games {
+		name := strings.ToLower(strings.TrimSpace(g.Name))
+		if name == "" {
+			continue
+		}
+		result[name] = romDefInfo{
+			Parent: strings.ToLower(strings.TrimSpace(g.RomOf)),
+			IsBios: strings.EqualFold(strings.TrimSpace(g.IsBios), "yes"),
+		}
+	}
+	return result, nil
+}
+
+func loadRomDefsFromMame(datPath string) (map[string]romDefInfo, error) {
+	parser := dat.NewMameParser()
+	df, err := parser.ParseFile(datPath)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]romDefInfo)
+	for _, m := range df.Machines {
+		name := strings.ToLower(strings.TrimSpace(m.Name))
+		if name == "" {
+			continue
+		}
+		result[name] = romDefInfo{
+			Parent: strings.ToLower(strings.TrimSpace(m.RomOf)),
+			IsBios: strings.EqualFold(strings.TrimSpace(m.IsBios), "yes"),
+		}
+	}
+	return result, nil
+}
+
+func (c *WebCommand) parentChainFromDefs(core string, romName string) []sdk.ParentInfo {
+	family := coreFamily(core)
+	if family == "" {
+		return nil
+	}
+	name := strings.ToLower(strings.TrimSpace(romName))
+	if name == "" {
+		return nil
+	}
+	defs := c.defsFBNeo
+	if family == "mame" {
+		defs = c.defsMame
+	}
+	if defs == nil {
+		return nil
+	}
+	var chain []sdk.ParentInfo
+	seen := make(map[string]struct{})
+	current := name
+	for {
+		def, ok := defs[current]
+		if !ok {
+			break
+		}
+		parent := strings.TrimSpace(def.Parent)
+		if parent == "" {
+			break
+		}
+		parentLower := strings.ToLower(parent)
+		if _, exists := seen[parentLower]; exists {
+			break
+		}
+		seen[parentLower] = struct{}{}
+		chain = append(chain, sdk.ParentInfo{
+			Name:   parent + ".zip",
+			Exist:  false,
+			IsBios: def.IsBios,
+		})
+		current = parentLower
+	}
+	return chain
+}
+
 func deriveRomBase(files []string) string {
 	for _, file := range files {
 		trimmed := strings.TrimSpace(file)
@@ -1910,6 +2575,12 @@ func normalizeAssetKey(key string) string {
 		return ""
 	}
 	return strings.ToLower(trimmed)
+}
+
+func romNameFromPath(p string) string {
+	base := filepath.Base(p)
+	ext := filepath.Ext(base)
+	return strings.TrimSpace(strings.TrimSuffix(base, ext))
 }
 
 func resolveAssetPath(baseDir, value string) string {

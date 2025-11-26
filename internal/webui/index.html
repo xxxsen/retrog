@@ -59,6 +59,7 @@
               <p class="panel-subtitle">展示 metadata 中的所有字段</p>
             </div>
             <div class="panel-actions">
+              <button type="button" id="show-rom-info" class="ghost">Rom信息</button>
               <button type="button" id="edit-game" class="ghost">编辑</button>
               <button type="button" id="delete-game" class="ghost danger">删除</button>
             </div>
@@ -194,6 +195,35 @@
         </div>
       </form>
       <div id="collection-status" class="edit-status"></div>
+    </div>
+  </div>
+  <div id="rominfo-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>ROM 信息</h3>
+        <button type="button" id="rominfo-close">×</button>
+      </div>
+      <div class="rominfo-body">
+        <div class="rominfo-select-row">
+          <label for="rominfo-select">选择 ROM 文件</label>
+          <select id="rominfo-select" class="rominfo-select"></select>
+        </div>
+        <div class="rominfo-card rominfo-info">
+          <h4>ROM 基础信息</h4>
+          <div id="rominfo-files" class="rominfo-list"></div>
+        </div>
+        <div class="rominfo-panels">
+          <div class="rominfo-card scrollable">
+            <h4>当前 ROM 信息</h4>
+            <div id="rominfo-current-subroms" class="rominfo-grid rominfo-grid-3"></div>
+          </div>
+          <div class="rominfo-card scrollable">
+            <h4>Dat 子 ROM 状态</h4>
+            <div id="rominfo-subroms" class="rominfo-grid rominfo-grid-5"></div>
+          </div>
+        </div>
+        <div id="rominfo-status" class="edit-status"></div>
+      </div>
     </div>
   </div>
   <div id="delete-modal" class="modal hidden">
