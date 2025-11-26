@@ -53,7 +53,6 @@ type collectionPayload struct {
 	RelativePath string          `json:"relative_path"`
 	SortKey      string          `json:"sort_key"`
 	Extensions   []string        `json:"extensions,omitempty"`
-	Emulator     string          `json:"emulator,omitempty"`
 	Core         string          `json:"core,omitempty"`
 	Fields       []*fieldPayload `json:"fields"`
 	Games        []*gamePayload  `json:"games"`
