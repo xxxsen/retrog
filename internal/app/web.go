@@ -37,6 +37,7 @@ type WebCommand struct {
 	dir             string
 	root            string
 	bind            string
+	datDir          string
 	fbneoDat        string
 	mameDat         string
 	biosDir         string
@@ -229,8 +230,7 @@ func (c *WebCommand) Desc() string {
 func (c *WebCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.dir, "dir", "", "ROM 根目录")
 	f.StringVar(&c.bind, "bind", ":8080", "HTTP 监听地址，例如 0.0.0.0:8080")
-	f.StringVar(&c.fbneoDat, "fbneo_dat", "", "fbneo DAT 文件路径，用于校验 ROM")
-	f.StringVar(&c.mameDat, "mame_dat", "", "mame DAT 文件路径，用于校验 ROM")
+	f.StringVar(&c.datDir, "dat", "", "DAT 文件目录，包含 fbneo.dat / mame.dat，用于校验 ROM")
 	f.StringVar(&c.biosDir, "bios", "", "BIOS 目录，用于 rom 校验父/依赖")
 }
 
@@ -325,26 +325,31 @@ func (c *WebCommand) PostRun(ctx context.Context) error {
 func (c *WebCommand) prepareDatPaths(ctx context.Context) error {
 	logger := logutil.GetLogger(ctx)
 	needBios := false
+	datRoot := strings.TrimSpace(c.datDir)
+	if datRoot != "" {
+		fbneoCandidate := filepath.Join(datRoot, "fbneo.dat")
+		if _, err := os.Stat(fbneoCandidate); err == nil {
+			c.fbneoDat = fbneoCandidate
+		} else {
+			logger.Info("fbneo.dat not found in dat dir", zap.String("dat_dir", datRoot))
+		}
+		mameCandidate := filepath.Join(datRoot, "mame.dat")
+		if _, err := os.Stat(mameCandidate); err == nil {
+			c.mameDat = mameCandidate
+		} else {
+			logger.Info("mame.dat not found in dat dir", zap.String("dat_dir", datRoot))
+		}
+	}
 	if strings.TrimSpace(c.fbneoDat) != "" {
 		needBios = true
-		if _, err := os.Stat(c.fbneoDat); err != nil {
-			logger.Warn("fbneo dat not found, skip fbneo rom check", zap.String("fbneo_dat", c.fbneoDat), zap.Error(err))
-			c.fbneoDat = ""
-		} else {
-			c.defsFBNeo, _ = loadRomDefsFromFBNeo(c.fbneoDat)
-		}
+		c.defsFBNeo, _ = loadRomDefsFromFBNeo(c.fbneoDat)
 	}
 	if strings.TrimSpace(c.mameDat) != "" {
 		needBios = true
-		if _, err := os.Stat(c.mameDat); err != nil {
-			logger.Warn("mame dat not found, skip mame rom check", zap.String("mame_dat", c.mameDat), zap.Error(err))
-			c.mameDat = ""
-		} else {
-			c.defsMame, _ = loadRomDefsFromMame(c.mameDat)
-		}
+		c.defsMame, _ = loadRomDefsFromMame(c.mameDat)
 	}
 	if needBios && strings.TrimSpace(c.biosDir) == "" {
-		return errors.New("bios directory is required when fbneo_dat or mame_dat is provided")
+		return errors.New("bios directory is required when fbneo/mame dat is provided")
 	}
 	if strings.TrimSpace(c.biosDir) != "" {
 		info, err := os.Stat(c.biosDir)
