@@ -374,18 +374,48 @@ func validateDefinition(def romDefinition, files []archiveFile) (greens, yellows
 			}
 		}
 
-		if rom.Optional {
-			result.TestState = SubRomStateYellow
-			result.TestMessage = "optional missing"
-			yellows = append(yellows, &result)
-		} else {
+		// same-name but mismatched content
+		if f, ok := indexFull[name]; ok {
 			result.TestState = SubRomStateRed
-			result.TestMessage = fmt.Sprintf("missing rom: %s", rom.NormalizedName())
+			result.TestMessage = buildMismatchMessage(rom, f)
 			reds = append(reds, &result)
+			goto nextRom
 		}
-	nextRom:
+		if candidates := indexBase[name]; len(candidates) > 0 {
+			result.TestState = SubRomStateRed
+			result.TestMessage = buildMismatchMessage(rom, candidates[0])
+			reds = append(reds, &result)
+			goto nextRom
+		}
+
+	if rom.Optional {
+		result.TestState = SubRomStateYellow
+		result.TestMessage = "optional missing"
+		yellows = append(yellows, &result)
+	} else {
+		result.TestState = SubRomStateRed
+		result.TestMessage = fmt.Sprintf("missing rom: %s", rom.NormalizedName())
+		reds = append(reds, &result)
 	}
-	return
+nextRom:
+}
+return
+}
+
+func buildMismatchMessage(rom SubRomFile, f archiveFile) string {
+	var parts []string
+	if rom.Size > 0 && int64(f.Size) != rom.Size {
+		parts = append(parts, fmt.Sprintf("size need %d got %d", rom.Size, f.Size))
+	}
+	expectedCRC := strings.ToLower(strings.TrimSpace(rom.CRC))
+	actualCRC := strings.ToLower(fmt.Sprintf("%08x", f.CRC32))
+	if expectedCRC != "" && expectedCRC != actualCRC {
+		parts = append(parts, fmt.Sprintf("crc need %s got %s", rom.CRC, actualCRC))
+	}
+	if len(parts) == 0 {
+		return "mismatch"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func isOptionalRomEntry(r dat.Rom) bool {

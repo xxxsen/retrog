@@ -2694,7 +2694,8 @@ func deriveCore(launch string) string {
 	if launch == "" || !strings.Contains(strings.ToLower(launch), "retroarch") {
 		return ""
 	}
-	args, err := shlex.Split(launch)
+	normalizedLaunch := strings.ReplaceAll(launch, "\\", "/")
+	args, err := shlex.Split(normalizedLaunch)
 	if err != nil || len(args) == 0 {
 		return ""
 	}

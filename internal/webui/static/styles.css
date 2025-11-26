@@ -558,7 +558,7 @@ button:disabled {
 }
 
 .rominfo-grid-header.rominfo-grid-5 {
-  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px) minmax(50px, 70px) minmax(200px, 3fr);
+  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px) minmax(50px, 70px) minmax(240px, 3.8fr);
 }
 
 .rominfo-list {
@@ -648,7 +648,7 @@ button:disabled {
 }
 
 .rominfo-grid-5 .rominfo-grid-item {
-  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px) minmax(50px, 70px) minmax(200px, 3fr);
+  grid-template-columns: minmax(140px, 1fr) minmax(90px, 120px) minmax(80px, 110px) minmax(50px, 70px) minmax(240px, 3.8fr);
 }
 
 .rominfo-grid-item span {
