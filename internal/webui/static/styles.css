@@ -35,7 +35,7 @@ body {
 }
 
 .collections-panel {
-  width: 280px;
+  width: 320px;
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
   display: flex;
@@ -79,6 +79,14 @@ body {
   display: flex;
   gap: 16px;
   min-height: 0;
+}
+
+.collections {
+  flex: 0 0 320px;
+}
+
+.games-panel {
+  flex: 0 0 420px;
 }
 
 .search-bar {

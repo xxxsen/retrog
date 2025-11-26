@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/shlex"
 	"github.com/spf13/pflag"
 	"github.com/xxxsen/common/logutil"
 	"github.com/xxxsen/retrog/internal/constant"
@@ -52,6 +53,8 @@ type collectionPayload struct {
 	RelativePath string          `json:"relative_path"`
 	SortKey      string          `json:"sort_key"`
 	Extensions   []string        `json:"extensions,omitempty"`
+	Emulator     string          `json:"emulator,omitempty"`
+	Core         string          `json:"core,omitempty"`
 	Fields       []*fieldPayload `json:"fields"`
 	Games        []*gamePayload  `json:"games"`
 }
@@ -836,6 +839,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				RelativePath: relDir,
 				SortKey:      strings.TrimSpace(typed.SortBy),
 				Extensions:   parseCollectionExtensions(blk),
+				Core:         deriveCore(typed.Launch),
 				Fields:       convertBlockFields(blk),
 			}
 			result = append(result, current)
@@ -2013,6 +2017,41 @@ func buildCollectionID(metadataPath string, idx int) string {
 
 func buildGameID(collectionID string, idx int) string {
 	return fmt.Sprintf("%s-game-%d", collectionID, idx)
+}
+
+func deriveCore(launch string) string {
+	launch = strings.TrimSpace(launch)
+	if launch == "" || !strings.Contains(strings.ToLower(launch), "retroarch") {
+		return ""
+	}
+	args, err := shlex.Split(launch)
+	if err != nil || len(args) == 0 {
+		return ""
+	}
+	fs := pflag.NewFlagSet("launch", pflag.ContinueOnError)
+	fs.ParseErrorsWhitelist.UnknownFlags = true
+	corePath := fs.StringP("libretro", "L", "", "libretro core")
+	_ = fs.Parse(args)
+	return coreNameFromPath(*corePath)
+}
+
+func coreNameFromPath(p string) string {
+	p = strings.Trim(p, "\"'")
+	p = normalizePath(p)
+	if p == "" {
+		return ""
+	}
+	base := filepath.Base(p)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+func normalizePath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	p = strings.ReplaceAll(p, "\\", "/")
+	return p
 }
 
 func assetFileBaseFromKey(key string) string {

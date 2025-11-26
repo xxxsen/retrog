@@ -286,7 +286,9 @@
       pathRow.className = "collection-path-row";
       const pathLine = document.createElement("div");
       pathLine.className = "collection-path-line";
-      pathLine.textContent = collection.relative_path || collection.dir_name || "";
+      const coreText = formatCore(collection);
+      const dirText = collection.relative_path || collection.dir_name || "";
+      pathLine.textContent = coreText ? `${dirText} (${coreText})` : dirText;
       const extLine = document.createElement("div");
       extLine.className = "collection-ext-line";
       extLine.textContent = formatExtensions(collection.extensions);
@@ -329,6 +331,14 @@
     const display = exts.slice(0, 3).map((ext) => (ext || "").trim()).filter(Boolean);
     const suffix = exts.length > 3 ? " ..." : "";
     return display.join(", ") + suffix;
+  }
+
+  function formatCore(collection) {
+    const core = (collection?.core || "").trim();
+    if (!core) {
+      return "";
+    }
+    return core;
   }
 
   function compareCollections(a, b) {
