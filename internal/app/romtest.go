@@ -212,6 +212,10 @@ func printSubResult(level string, r *sdk.SubRomFileTestResult) {
 	if r == nil || r.SubRom == nil {
 		return
 	}
+	label := level
+	if level == "error" {
+		label = "\033[31merror\033[0m"
+	}
 	name := r.SubRom.NormalizedName()
 	crc := r.SubRom.CRC
 	size := r.SubRom.Size
@@ -224,5 +228,5 @@ func printSubResult(level string, r *sdk.SubRomFileTestResult) {
 			reason = "error"
 		}
 	}
-	fmt.Printf("- %s: %s %s %d => %s\n", level, name, crc, size, reason)
+	fmt.Printf("- %s: %s %s %d => %s\n", label, name, crc, size, reason)
 }
