@@ -479,6 +479,10 @@ button:disabled {
   cursor: pointer;
 }
 
+.rominfo-content {
+  width: min(1330px, 100%);
+}
+
 .rominfo-body {
   display: flex;
   flex-direction: column;

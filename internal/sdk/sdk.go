@@ -376,30 +376,30 @@ func validateDefinition(def romDefinition, files []archiveFile) (greens, yellows
 
 		// same-name but mismatched content
 		if f, ok := indexFull[name]; ok {
-			result.TestState = SubRomStateRed
+			result.TestState = SubRomStateYellow
 			result.TestMessage = buildMismatchMessage(rom, f)
-			reds = append(reds, &result)
+			yellows = append(yellows, &result)
 			goto nextRom
 		}
 		if candidates := indexBase[name]; len(candidates) > 0 {
-			result.TestState = SubRomStateRed
+			result.TestState = SubRomStateYellow
 			result.TestMessage = buildMismatchMessage(rom, candidates[0])
-			reds = append(reds, &result)
+			yellows = append(yellows, &result)
 			goto nextRom
 		}
 
-	if rom.Optional {
-		result.TestState = SubRomStateYellow
-		result.TestMessage = "optional missing"
-		yellows = append(yellows, &result)
-	} else {
-		result.TestState = SubRomStateRed
-		result.TestMessage = fmt.Sprintf("missing rom: %s", rom.NormalizedName())
-		reds = append(reds, &result)
+		if rom.Optional {
+			result.TestState = SubRomStateYellow
+			result.TestMessage = "optional missing"
+			yellows = append(yellows, &result)
+		} else {
+			result.TestState = SubRomStateRed
+			result.TestMessage = fmt.Sprintf("missing rom: %s", rom.NormalizedName())
+			reds = append(reds, &result)
+		}
+	nextRom:
 	}
-nextRom:
-}
-return
+	return
 }
 
 func buildMismatchMessage(rom SubRomFile, f archiveFile) string {
