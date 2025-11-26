@@ -37,8 +37,9 @@ type SubRomFileTestResult struct {
 
 // ParentInfo describes a romof/bios ancestor.
 type ParentInfo struct {
-	Name  string
-	Exist bool
+	Name   string
+	Exist  bool
+	IsBios bool
 }
 
 // RomFileTestResult aggregates validation outcomes for a single archive.

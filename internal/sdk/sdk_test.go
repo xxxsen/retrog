@@ -122,6 +122,67 @@ func TestMameSDK(t *testing.T) {
 	}
 }
 
+func TestParentAndBiosLabeling(t *testing.T) {
+	dir := t.TempDir()
+	datPath := filepath.Join(dir, "chain.dat")
+	datContent := `<?xml version="1.0"?>
+<datafile>
+  <header><name>Chain</name></header>
+  <game name="child" romof="parent1">
+    <rom name="c.bin" size="1" crc="00"/>
+  </game>
+  <game name="parent1" romof="biosset">
+    <rom name="p.bin" size="1" crc="00"/>
+  </game>
+  <game name="biosset">
+    <rom name="b.bin" size="1" crc=""/>
+  </game>
+</datafile>`
+	if err := os.WriteFile(datPath, []byte(datContent), 0o644); err != nil {
+		t.Fatalf("write dat: %v", err)
+	}
+	romDir := filepath.Join(dir, "roms")
+	biosDir := filepath.Join(dir, "bios")
+	if err := os.MkdirAll(romDir, 0o755); err != nil {
+		t.Fatalf("mkdir roms: %v", err)
+	}
+	if err := os.MkdirAll(biosDir, 0o755); err != nil {
+		t.Fatalf("mkdir bios: %v", err)
+	}
+	writeZip(t, filepath.Join(romDir, "child.zip"), map[string][]byte{"c.bin": {0}})
+	writeZip(t, filepath.Join(romDir, "parent1.zip"), map[string][]byte{"p.bin": {0}})
+	writeZip(t, filepath.Join(biosDir, "biosset.zip"), map[string][]byte{"b.bin": {0}})
+
+	sdk, err := NewFBNeoTestSDK(datPath)
+	if err != nil {
+		t.Fatalf("init sdk: %v", err)
+	}
+	res, err := sdk.TestDir(stdCtx{context.Background()}, romDir, biosDir, []string{"zip"})
+	if err != nil {
+		t.Fatalf("test dir: %v", err)
+	}
+	var child *RomFileTestResult
+	for _, r := range res.List {
+		if r.RomName == "child" {
+			child = r
+			break
+		}
+	}
+	if child == nil {
+		t.Fatalf("child result not found")
+	}
+	parents := child.ParentList
+	if len(parents) != 2 {
+		t.Fatalf("expected 2 parents, got %d", len(parents))
+	}
+	if parents[0].IsBios || !parents[0].Exist {
+		t.Fatalf("parent1 flags incorrect: %+v", parents[0])
+	}
+	if !parents[1].IsBios || !parents[1].Exist {
+		t.Fatalf("biosset flags incorrect: %+v", parents[1])
+	}
+}
+
 func writeZip(t *testing.T, path string, files map[string][]byte) {
 	t.Helper()
 	var buf bytes.Buffer

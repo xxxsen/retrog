@@ -152,7 +152,8 @@ func (t *tester) testOne(path string, biosdir string, nameToPath map[string]stri
 		} else {
 			exist = false
 		}
-		parentInfos = append(parentInfos, ParentInfo{Name: filepath.Base(parentPath), Exist: exist})
+		isBios := exist && isPathInDir(parentPath, biosdir)
+		parentInfos = append(parentInfos, ParentInfo{Name: filepath.Base(parentPath), Exist: exist, IsBios: isBios})
 		if exist {
 			pFiles, pCloser, err := openArchive(parentPath)
 			if err != nil {

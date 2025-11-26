@@ -107,7 +107,7 @@ func (c *RomTestCommand) Run(ctx context.Context) error {
 		} else if hasYellow || parentMissing {
 			status = "test warn"
 		}
-		label := formatParentLabel(item.ParentList, status)
+		label := formatParentLabel(item.ParentList)
 		fmt.Printf("%s -- %s%s\n", path, status, label)
 
 		if hasRed || hasYellow {
@@ -173,29 +173,39 @@ func hasMissingParent(parents []sdk.ParentInfo) bool {
 	return false
 }
 
-func formatParentLabel(parents []sdk.ParentInfo, status string) string {
+func formatParentLabel(parents []sdk.ParentInfo) string {
 	if len(parents) == 0 {
 		return ""
 	}
-	var parts []string
+	var parentParts []string
+	var biosParts []string
 	for _, p := range parents {
 		if p.Name == "" {
 			continue
 		}
-		if p.Exist {
-			parts = append(parts, p.Name)
+		name := p.Name
+		if !p.Exist {
+			name = fmt.Sprintf("%s missing", p.Name)
+		}
+		if p.IsBios {
+			biosParts = append(biosParts, name)
 		} else {
-			parts = append(parts, fmt.Sprintf("%s missing", p.Name))
+			parentParts = append(parentParts, name)
 		}
 	}
-	if len(parts) == 0 {
+	hasParent := len(parentParts) > 0
+	hasBios := len(biosParts) > 0
+	if !hasParent && !hasBios {
 		return ""
 	}
-	prefix := "parent/bios"
-	if status != "test ok" {
-		prefix = "parent"
+	switch {
+	case hasParent && hasBios:
+		return fmt.Sprintf("(parent: %s, bios: %s)", strings.Join(parentParts, ", "), strings.Join(biosParts, ", "))
+	case hasBios:
+		return fmt.Sprintf("(bios: %s)", strings.Join(biosParts, ", "))
+	default:
+		return fmt.Sprintf("(parent: %s)", strings.Join(parentParts, ", "))
 	}
-	return fmt.Sprintf("(%s: %s)", prefix, strings.Join(parts, ", "))
 }
 
 func printSubResult(level string, r *sdk.SubRomFileTestResult) {
