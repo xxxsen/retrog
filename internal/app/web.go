@@ -2226,7 +2226,11 @@ func pickRomPath(metadataPath string, candidates []string, selected string) stri
 		return ""
 	}
 	if strings.TrimSpace(selected) != "" {
-		target := normalizeRomPathKey(filepath.Join(filepath.Dir(metadataPath), filepath.FromSlash(selected)))
+		selectedClean := filepath.FromSlash(strings.TrimSpace(selected))
+		target := normalizeRomPathKey(selectedClean)
+		if !filepath.IsAbs(selectedClean) {
+			target = normalizeRomPathKey(filepath.Join(filepath.Dir(metadataPath), selectedClean))
+		}
 		for _, c := range candidates {
 			if normalizeRomPathKey(c) == target {
 				return c
