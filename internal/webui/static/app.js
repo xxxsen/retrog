@@ -400,6 +400,11 @@
     return Boolean(game && game.rom_missing);
   }
 
+  function isSupportedCore(core) {
+    const lower = (core || "").toLowerCase();
+    return lower.startsWith("fbneo") || lower.startsWith("mame");
+  }
+
   function isAssetKey(key) {
     return Boolean(key) && key.toLowerCase().startsWith("assets.");
   }
@@ -548,10 +553,13 @@
       missingFlag.textContent = "⛔";
       nameLine.appendChild(missingFlag);
     }
-    const status = document.createElement("span");
-    status.className = "game-status";
-    status.textContent = game?.rom_status_emoji || "🔘";
-    nameLine.appendChild(status);
+    const emoji = game?.rom_status_emoji;
+    if (emoji) {
+      const status = document.createElement("span");
+      status.className = "game-status";
+      status.textContent = emoji;
+      nameLine.appendChild(status);
+    }
     const pathLine = document.createElement("div");
     pathLine.className = "game-path-line";
     pathLine.textContent = normalizeRomPath(game.rel_rom_path || game.rom_path);
@@ -1417,7 +1425,10 @@
     const isMissing = context ? isMissingGame(context.game) : false;
     const disableEdit = !hasSelection || isMissing;
     const disableDelete = !hasSelection || isMissing;
-    const disableRomInfo = !hasSelection;
+    const supportedRomInfo = Boolean(
+      context && context.collection && isSupportedCore(context.collection.core),
+    );
+    const disableRomInfo = !hasSelection || !supportedRomInfo;
     if (editButton) {
       editButton.disabled = disableEdit;
       editButton.classList.toggle("disabled", disableEdit);
@@ -1431,6 +1442,7 @@
     if (romInfoButton) {
       romInfoButton.disabled = disableRomInfo;
       romInfoButton.classList.toggle("disabled", disableRomInfo);
+      romInfoButton.classList.toggle("hidden", disableRomInfo);
     }
   }
 
@@ -1677,6 +1689,10 @@
 
   if (romInfoButton) {
     romInfoButton.addEventListener("click", () => {
+      const context = getCurrentSelectionContext();
+      if (!context || !context.collection || !isSupportedCore(context.collection.core)) {
+        return;
+      }
       loadRomInfo();
     });
   }

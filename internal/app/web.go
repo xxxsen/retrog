@@ -726,9 +726,15 @@ func (c *WebCommand) reloadCollections(ctx context.Context) error {
 
 func (c *WebCommand) applyStoredRomStatus(cols []*collectionPayload) {
 	for _, coll := range cols {
+		family := coreFamily(coll.Core)
 		for _, game := range coll.Games {
 			status := c.romStatusForGame(coll.MetadataPath, game.XIndexID)
 			if status == nil {
+				if family == "" {
+					game.RomStatus = ""
+					game.RomEmoji = ""
+					continue
+				}
 				status = &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
 			}
 			game.RomStatus = string(status.Status)
@@ -917,6 +923,12 @@ func (c *WebCommand) applyRomChecks(ctx context.Context, cols []*collectionPaylo
 	for _, coll := range cols {
 		family := coreFamily(coll.Core)
 		for _, game := range coll.Games {
+			if family == "" {
+				game.RomStatus = ""
+				game.RomEmoji = ""
+				c.setRomStatusForGame(coll.MetadataPath, game.XIndexID, nil)
+				continue
+			}
 			status := &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
 			if family != "" {
 				if m, ok := resultsByFamily[family]; ok {
@@ -937,7 +949,14 @@ func (c *WebCommand) applyRomChecks(ctx context.Context, cols []*collectionPaylo
 
 func (c *WebCommand) applyDefaultRomStatus(cols []*collectionPayload) {
 	for _, coll := range cols {
+		family := coreFamily(coll.Core)
 		for _, game := range coll.Games {
+			if family == "" {
+				game.RomStatus = ""
+				game.RomEmoji = ""
+				c.setRomStatusForGame(coll.MetadataPath, game.XIndexID, nil)
+				continue
+			}
 			game.RomStatus = string(romStatusNotTested)
 			game.RomEmoji = "🔘"
 			c.setRomStatusForGame(coll.MetadataPath, game.XIndexID, &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"})
@@ -1012,15 +1031,16 @@ func buildGameKey(metadataPath string, xIndexID int) string {
 }
 
 func (c *WebCommand) setRomStatusForGame(metadataPath string, xIndexID int, status *romStatusSummary) {
-	if status == nil {
-		status = &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
-	}
 	key := buildGameKey(metadataPath, xIndexID)
 	c.romMu.Lock()
 	if c.romStatusByGame == nil {
 		c.romStatusByGame = make(map[string]*romStatusSummary)
 	}
-	c.romStatusByGame[key] = status
+	if status == nil {
+		delete(c.romStatusByGame, key)
+	} else {
+		c.romStatusByGame[key] = status
+	}
 	c.romMu.Unlock()
 }
 
