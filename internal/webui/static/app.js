@@ -105,6 +105,7 @@
     rating: "格式: 0-1之间的任意浮点数均可",
     genre: "多个值使用逗号(,)分隔",
   };
+  const REQUIRED_GAME_KEYS = new Set(["game", "file", "assets.boxfront"]);
   const COLLAPSIBLE_FIELD_KEYS = new Set([
     "sort_name",
     "sort_title",
@@ -915,6 +916,8 @@
         state.previewEl.innerHTML = "";
       }
     }
+    const allowRemove = state.baseAllowRemove && !state.locked && !REQUIRED_GAME_KEYS.has(normalized);
+    updateRemoveButtonVisibility(row, allowRemove);
   }
 
   function refreshAssetPreview(row, key, game) {
@@ -1505,7 +1508,7 @@
       (options.disabledKeys ? Array.from(options.disabledKeys) : []).map((k) => k.toLowerCase()),
     );
     const locked = Boolean(options.locked);
-    const allowRemove = options.allowRemove !== false && !locked;
+    const baseAllowRemove = options.allowRemove !== false;
     const keyLower = (field.key || "").toLowerCase();
 
     let keyElement;
@@ -1565,17 +1568,16 @@
     uploadControls.appendChild(uploadBtn);
     uploadControls.appendChild(preview);
 
-    let removeBtn = null;
-    if (allowRemove) {
-      removeBtn = document.createElement("button");
-      removeBtn.type = "button";
-      removeBtn.className = "remove-field";
-      removeBtn.textContent = "删除";
-      removeBtn.addEventListener("click", () => {
-        recordRemovedField(row);
-        row.remove();
-      });
-    }
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "remove-field";
+    removeBtn.textContent = "删除";
+    removeBtn.addEventListener("click", () => {
+      recordRemovedField(row);
+      row.remove();
+    });
+    const removePlaceholder = document.createElement("div");
+    removePlaceholder.className = "remove-placeholder";
 
     keyWrapper.appendChild(keyElement);
     valueWrapper.appendChild(valueArea);
@@ -1587,13 +1589,7 @@
 
     row.appendChild(keyWrapper);
     row.appendChild(valueWrapper);
-    if (removeBtn) {
-      row.appendChild(removeBtn);
-    } else {
-      const placeholder = document.createElement("div");
-      placeholder.className = "remove-placeholder";
-      row.appendChild(placeholder);
-    }
+    row.appendChild(removePlaceholder);
 
     row.dataset.key = field.key || "";
     rowState.set(row, {
@@ -1607,6 +1603,9 @@
       locked,
       initialValuesNormalized: normalizeValuesForPayload(field.key || "", (options.initialValues || []).join("\n")),
       valueList,
+      removeBtn,
+      removePlaceholder,
+      baseAllowRemove,
     });
     updateRowKey(row, field.key || "", options.sourceGame || null);
     if (isFileKey(keyLower) && valueList) {
@@ -1621,6 +1620,31 @@
       }
     }
     return row;
+  }
+
+  function updateRemoveButtonVisibility(row, allow) {
+    const state = getRowState(row);
+    if (!state || !state.removeBtn || !state.removePlaceholder) {
+      return;
+    }
+    const hasButton = state.removeBtn.parentElement === row;
+    if (allow) {
+      if (!hasButton) {
+        if (state.removePlaceholder.parentElement === row) {
+          row.replaceChild(state.removeBtn, state.removePlaceholder);
+        } else {
+          row.appendChild(state.removeBtn);
+        }
+      }
+      state.removeBtn.disabled = false;
+      state.removeBtn.classList.remove("hidden");
+    } else {
+      if (hasButton) {
+        row.replaceChild(state.removePlaceholder, state.removeBtn);
+      } else if (!state.removePlaceholder.parentElement) {
+        row.appendChild(state.removePlaceholder);
+      }
+    }
   }
 
   function gatherFieldPayload() {
