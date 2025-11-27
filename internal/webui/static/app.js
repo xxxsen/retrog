@@ -104,6 +104,7 @@
     rating: "格式: 0-1之间的任意浮点数均可",
     genre: "多个值使用逗号(,)分隔",
   };
+  const STAGED_UPLOAD_PREFIX = "__upload__/";
 
   let collections = [];
   let currentCollectionId = null;
@@ -739,6 +740,77 @@
     removedFields.push({ key, values });
   }
 
+  function removeValueFromRow(row, value) {
+    const state = getRowState(row);
+    const key = (row.dataset.key || "").trim();
+    if (!state || !state.valueArea || !key) {
+      return;
+    }
+    const keyLower = key.toLowerCase();
+    const values = normalizeValuesForPayload(keyLower, state.valueArea.value);
+    const next = [];
+    let removedOnce = false;
+    values.forEach((v) => {
+      if (!removedOnce && v === value) {
+        removedOnce = true;
+        return;
+      }
+      next.push(v);
+    });
+    state.valueArea.value = next.join("\n");
+    updateUploadableValueList(row);
+    if (removedOnce) {
+      removedFields.push({ key, values: [value] });
+    }
+  }
+
+  function updateUploadableValueList(row) {
+    const state = getRowState(row);
+    if (!state || !state.valueList || !state.valueArea) {
+      return;
+    }
+    const key = (row.dataset.key || "").toLowerCase();
+    if (!isFileKey(key)) {
+      state.valueList.classList.add("hidden");
+      state.valueList.innerHTML = "";
+      return;
+    }
+    const values = normalizeValuesForPayload(key, state.valueArea.value);
+    const container = state.valueList;
+    container.innerHTML = "";
+    if (!values.length) {
+      return;
+    }
+    values.forEach((v) => {
+      const chip = document.createElement("div");
+      chip.className = "file-chip";
+      const text = document.createElement("span");
+      const label = formatUploadLabel(v);
+      text.textContent = label;
+      text.title = v;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "file-chip-remove";
+      btn.textContent = "×";
+      btn.addEventListener("click", () => removeValueFromRow(row, v));
+      chip.appendChild(text);
+      chip.appendChild(btn);
+      container.appendChild(chip);
+    });
+  }
+
+  function formatUploadLabel(path) {
+    if (!path) {
+      return "";
+    }
+    let trimmed = path;
+    if (trimmed.startsWith(STAGED_UPLOAD_PREFIX)) {
+      trimmed = trimmed.substring(STAGED_UPLOAD_PREFIX.length);
+    }
+    const parts = trimmed.split(/[/\\]/);
+    return parts.length ? parts[parts.length - 1] : trimmed;
+  }
+
   function updateRowKey(row, newKey, game) {
     const state = getRowState(row);
     const rawKey = (newKey || "").trim();
@@ -757,6 +829,16 @@
     if (state.valueArea) {
       state.valueArea.placeholder = placeholderForKey(normalized);
       state.valueArea.classList.toggle("description", normalized === "description");
+    }
+    if (isFileKey(normalized) && state.valueList) {
+      state.valueList.classList.remove("hidden");
+      updateUploadableValueList(row);
+      if (state.valueArea) {
+        state.valueArea.addEventListener("input", () => updateUploadableValueList(row));
+      }
+    } else if (state.valueList) {
+      state.valueList.classList.add("hidden");
+      state.valueList.innerHTML = "";
     }
     if (isUploadableKey(normalized)) {
       if (state.uploadControls) {
@@ -851,6 +933,9 @@
     }
     const fileInput = document.createElement("input");
     fileInput.type = "file";
+    if (isFileKey(key)) {
+      fileInput.multiple = true;
+    }
     if (isAssetKey(key)) {
       fileInput.accept = "image/*,video/*";
     } else if (isFileKey(key)) {
@@ -860,14 +945,22 @@
       fileInput.accept = "*/*";
     }
     fileInput.addEventListener("change", () => {
-      if (fileInput.files && fileInput.files[0]) {
-        uploadFileForRow(row, fileInput.files[0], key, context);
+      if (fileInput.files && fileInput.files.length) {
+        uploadFilesForRow(row, Array.from(fileInput.files), key, context);
       }
     });
     fileInput.click();
   }
 
-  async function uploadFileForRow(row, file, key, context) {
+  async function uploadFilesForRow(row, files, key, context) {
+    for (const file of files) {
+      // sequential uploads to preserve order and status messaging
+      // eslint-disable-next-line no-await-in-loop
+      await uploadFileForRow(row, file, key, context, { append: isFileKey(key) });
+    }
+  }
+
+  async function uploadFileForRow(row, file, key, context, options = {}) {
     setEditStatus("上传中...");
     const formData = new FormData();
     formData.append("metadata_path", context.metadata_path);
@@ -891,7 +984,16 @@
       const data = await res.json();
       const state = getRowState(row);
       if (state.valueArea && data.file_path) {
-        state.valueArea.value = data.file_path;
+        if (options.append && isFileKey(key)) {
+          const existing = normalizeValuesForPayload(key, state.valueArea.value);
+          const next = existing.slice();
+          if (!next.includes(data.file_path)) {
+            next.push(data.file_path);
+          }
+          state.valueArea.value = next.join("\n");
+        } else {
+          state.valueArea.value = data.file_path;
+        }
       }
       if (state.previewEl) {
         if (data.asset) {
@@ -899,6 +1001,9 @@
         } else {
           state.previewEl.innerHTML = "";
         }
+      }
+      if (isFileKey(key)) {
+        updateUploadableValueList(row);
       }
       duplicateRows.delete(row);
       setRowFeedback(row, "", false);
@@ -1354,6 +1459,9 @@
       valueArea.classList.add("readonly");
     }
 
+    const valueList = document.createElement("div");
+    valueList.className = "file-value-list hidden";
+
     const uploadControls = document.createElement("div");
     uploadControls.className = "asset-upload-controls hidden";
     const uploadBtn = document.createElement("button");
@@ -1380,6 +1488,7 @@
 
     keyWrapper.appendChild(keyElement);
     valueWrapper.appendChild(valueArea);
+    valueWrapper.appendChild(valueList);
     valueWrapper.appendChild(uploadControls);
     const feedback = document.createElement("div");
     feedback.className = "upload-feedback";
@@ -1406,8 +1515,14 @@
       uploadButton: uploadBtn,
       locked,
       initialValuesNormalized: normalizeValuesForPayload(field.key || "", (options.initialValues || []).join("\n")),
+      valueList,
     });
     updateRowKey(row, field.key || "", options.sourceGame || null);
+    if (isFileKey(keyLower) && valueList) {
+      valueList.classList.remove("hidden");
+      updateUploadableValueList(row);
+      valueArea.addEventListener("input", () => updateUploadableValueList(row));
+    }
     return row;
   }
 
