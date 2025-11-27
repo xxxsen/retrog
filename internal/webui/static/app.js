@@ -75,8 +75,8 @@
     "players",
     "release",
     "rating",
-    "launch",
     "cwd",
+    "launch",
     "assets.boxfront",
     "assets.boxback",
     "assets.boxspine",
@@ -98,6 +98,12 @@
   let romInfoData = null;
   const collectionExtensions = new Map();
   const MULTILINE_TEXT_KEYS = new Set(["description", "summary", "desc"]);
+  const FIELD_PLACEHOLDERS = {
+    players: "格式: 2(单个数字), 1-4(范围)",
+    release: "格式: 1990(年), 1990-09(年月), 1990-09-21(年月日)",
+    rating: "格式: 0-1之间的任意浮点数均可",
+    genre: "多个值使用逗号(,)分隔",
+  };
 
   let collections = [];
   let currentCollectionId = null;
@@ -113,6 +119,11 @@
 
   function isMultilineTextKey(key) {
     return MULTILINE_TEXT_KEYS.has((key || "").trim().toLowerCase());
+  }
+
+  function placeholderForKey(key) {
+    const lower = (key || "").toLowerCase();
+    return FIELD_PLACEHOLDERS[lower] || "";
   }
 
   function normalizeValuesForPayload(key, rawValue) {
@@ -743,6 +754,10 @@
     if (state.uploadButton) {
       state.uploadButton.disabled = Boolean(state.locked);
     }
+    if (state.valueArea) {
+      state.valueArea.placeholder = placeholderForKey(normalized);
+      state.valueArea.classList.toggle("description", normalized === "description");
+    }
     if (isUploadableKey(normalized)) {
       if (state.uploadControls) {
         state.uploadControls.classList.remove("hidden");
@@ -1199,21 +1214,58 @@
 
   function populateEditFields(game) {
     editFields.innerHTML = "";
-    const fileField = findFieldByKey(game?.fields, "file") || findFieldByKey(game?.fields, "files");
-    const fallback = { key: "game", values: [game && game.title ? game.title : ""] };
-    const fields = game && Array.isArray(game.fields) && game.fields.length ? game.fields : [fallback];
-    fields.sort(fieldSortComparator);
-    fields.forEach((field) => {
+    const existingFields = [];
+    if (game && Array.isArray(game.fields) && game.fields.length) {
+      game.fields.forEach((field) => {
+        if (field && field.key) {
+          existingFields.push({
+            key: field.key,
+            values: Array.isArray(field.values) ? [...field.values] : [],
+          });
+        }
+      });
+    } else {
+      existingFields.push({ key: "game", values: [game && game.title ? game.title : ""] });
+    }
+
+    const mergedByKey = new Map();
+    existingFields.forEach((field) => {
+      const keyLower = (field.key || "").toLowerCase();
+      if (!keyLower) {
+        return;
+      }
+      if (!mergedByKey.has(keyLower)) {
+        mergedByKey.set(keyLower, { key: field.key, values: [] });
+      }
+      const bucket = mergedByKey.get(keyLower);
+      bucket.values.push(...(Array.isArray(field.values) ? field.values : []));
+    });
+
+    const orderedFields = [];
+    KNOWN_GAME_FIELDS.forEach((name) => {
+      const lower = name.toLowerCase();
+      const existing = mergedByKey.get(lower);
+      if (existing) {
+        orderedFields.push({ key: existing.key || name, values: [...existing.values] });
+        mergedByKey.delete(lower);
+      } else {
+        orderedFields.push({ key: name, values: [] });
+      }
+    });
+
+    const remaining = Array.from(mergedByKey.values()).sort(fieldSortComparator);
+    remaining.forEach((field) => orderedFields.push({ key: field.key, values: [...field.values] }));
+
+    orderedFields.forEach((field) => {
       const keyLower = (field.key || "").toLowerCase();
       const isIndexField = keyLower === INDEX_FIELD_KEY;
-      const isFileField = keyLower === "file" || keyLower === "files";
-      const shouldLock = isIndexField;
       editFields.appendChild(
         createEditableFieldRow(field, {
           isNew: false,
           sourceGame: game,
-          locked: shouldLock,
-          allowRemove: !shouldLock,
+          locked: isIndexField,
+          allowRemove: !isIndexField,
+          initialValues: Array.isArray(field.values) ? [...field.values] : [],
         }),
       );
     });
@@ -1292,7 +1344,7 @@
 
     const valueArea = document.createElement("textarea");
     valueArea.className = "edit-field-value";
-    valueArea.placeholder = "多个值使用换行分隔";
+    valueArea.placeholder = placeholderForKey(keyLower);
     valueArea.value = (field.values || []).join("\n");
     if (keyLower === "description") {
       valueArea.classList.add("description");
@@ -1353,6 +1405,7 @@
       feedbackEl: feedback,
       uploadButton: uploadBtn,
       locked,
+      initialValuesNormalized: normalizeValuesForPayload(field.key || "", (options.initialValues || []).join("\n")),
     });
     updateRowKey(row, field.key || "", options.sourceGame || null);
     return row;
@@ -1360,10 +1413,11 @@
 
   function gatherFieldPayload() {
     if (!editFields) {
-      return [];
+      return { fields: [], removed: [] };
     }
     const rows = Array.from(editFields.querySelectorAll(".edit-field-row"));
     const payload = [];
+    const cleared = [];
     rows.forEach((row) => {
       const state = getRowState(row);
       const valueArea = state.valueArea;
@@ -1374,12 +1428,17 @@
       const key = keySelect
         ? (keySelect.value || "").trim().toLowerCase()
         : (row.dataset.key || "").trim().toLowerCase();
+      if (!key) {
+        return;
+      }
       const values = normalizeValuesForPayload(key, valueArea.value);
-      if (key) {
+      if (values.length) {
         payload.push({ key, values });
+      } else if (Array.isArray(state.initialValuesNormalized) && state.initialValuesNormalized.length) {
+        cleared.push({ key, values: state.initialValuesNormalized });
       }
     });
-    return payload;
+    return { fields: payload, removed: cleared };
   }
 
   function setEditStatus(message, isError = false) {
@@ -1580,7 +1639,7 @@
       setEditStatus("请选择需要编辑的游戏", true);
       return;
     }
-    const fieldsPayload = gatherFieldPayload();
+    const { fields: fieldsPayload, removed: clearedFields } = gatherFieldPayload();
     const validationError = validateGameFieldsForSave(fieldsPayload);
     if (validationError) {
       setEditStatus(validationError, true);
@@ -1595,7 +1654,16 @@
         fields: fieldsPayload,
       };
       if (!context.isNew) {
-        body.removed_fields = removedFields;
+        const allRemoved = [];
+        if (Array.isArray(removedFields)) {
+          allRemoved.push(...removedFields);
+        }
+        if (Array.isArray(clearedFields)) {
+          allRemoved.push(...clearedFields);
+        }
+        if (allRemoved.length) {
+          body.removed_fields = allRemoved;
+        }
       }
       const res = await fetch(endpoint, {
         method: "POST",
