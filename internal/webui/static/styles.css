@@ -973,6 +973,10 @@ button:disabled {
   display: none !important;
 }
 
+.collapsed-hidden {
+  display: none !important;
+}
+
 @media (max-width: 1200px) {
   .panels {
     flex-direction: column;

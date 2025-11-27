@@ -44,6 +44,7 @@
   const romInfoSubroms = document.getElementById("rominfo-subroms");
   const romInfoStatus = document.getElementById("rominfo-status");
   const romInfoCurrentSubroms = document.getElementById("rominfo-current-subroms");
+  const moreFieldsButton = document.getElementById("edit-add-field");
   const INDEX_FIELD_KEY = "x-index-id";
   const COLLECTION_FIELD_CONFIG = [
     { id: "collection-x-index-id", key: "x-index-id", readonly: true },
@@ -104,6 +105,22 @@
     rating: "格式: 0-1之间的任意浮点数均可",
     genre: "多个值使用逗号(,)分隔",
   };
+  const COLLAPSIBLE_FIELD_KEYS = new Set([
+    "sort_name",
+    "sort_title",
+    "tag",
+    "summary",
+    "cwd",
+    "launch",
+    "assets.boxback",
+    "assets.boxspine",
+    "assets.boxfull",
+    "assets.cartridge",
+    "assets.disc",
+    "assets.cart",
+    "assets.marquee",
+    "assets.bezel",
+  ]);
   const STAGED_UPLOAD_PREFIX = "__upload__/";
 
   let collections = [];
@@ -113,9 +130,16 @@
   let showMissingGames = false;
   let searchQuery = "";
   let searchCollectionId = "";
+  let showExtraFields = false;
 
-  if (editAddField) {
-    editAddField.style.display = "none";
+  if (moreFieldsButton) {
+    moreFieldsButton.textContent = "更多字段";
+    moreFieldsButton.style.display = "inline-flex";
+    moreFieldsButton.addEventListener("click", () => {
+      showExtraFields = !showExtraFields;
+      updateCollapsibleVisibility();
+      moreFieldsButton.textContent = showExtraFields ? "收起字段" : "更多字段";
+    });
   }
 
   function isMultilineTextKey(key) {
@@ -799,6 +823,28 @@
     });
   }
 
+  function updateCollapsibleVisibility() {
+    if (!editFields) {
+      return;
+    }
+    const rows = Array.from(editFields.querySelectorAll(".edit-field-row"));
+    rows.forEach((row) => {
+      const key = (row.dataset.key || "").toLowerCase();
+      const isCollapsible = COLLAPSIBLE_FIELD_KEYS.has(key);
+      row.classList.toggle("collapsible-field", isCollapsible);
+      if (isCollapsible) {
+        if (showExtraFields) {
+          row.classList.remove("collapsed-hidden");
+        } else {
+          row.classList.add("collapsed-hidden");
+        }
+      }
+    });
+    if (moreFieldsButton) {
+      moreFieldsButton.textContent = showExtraFields ? "收起字段" : "更多字段";
+    }
+  }
+
   function formatUploadLabel(path) {
     if (!path) {
       return "";
@@ -1148,9 +1194,11 @@
       setEditStatus("该游戏缺少 ROM，无法编辑", true);
       return;
     }
+    showExtraFields = false;
     editContext = { ...baseContext };
     removedFields = [];
     populateEditFields(gameOverride || baseContext.game);
+    updateCollapsibleVisibility();
     setEditStatus("");
     editModal.classList.remove("hidden");
   }
@@ -1565,6 +1613,12 @@
       valueList.classList.remove("hidden");
       updateUploadableValueList(row);
       valueArea.addEventListener("input", () => updateUploadableValueList(row));
+    }
+    if (COLLAPSIBLE_FIELD_KEYS.has(keyLower)) {
+      row.classList.add("collapsible-field");
+      if (!showExtraFields) {
+        row.classList.add("collapsed-hidden");
+      }
     }
     return row;
   }
