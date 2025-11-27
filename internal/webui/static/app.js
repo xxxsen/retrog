@@ -840,6 +840,13 @@
     if (state.valueArea) {
       state.valueArea.placeholder = placeholderForKey(normalized);
       state.valueArea.classList.toggle("description", normalized === "description");
+      if (isUploadableKey(normalized) || state.locked) {
+        state.valueArea.readOnly = true;
+        state.valueArea.classList.add("readonly");
+      } else {
+        state.valueArea.readOnly = false;
+        state.valueArea.classList.remove("readonly");
+      }
     }
     if (isFileKey(normalized) && state.valueList) {
       state.valueList.classList.remove("hidden");
@@ -1490,7 +1497,7 @@
     if (keyLower === "description") {
       valueArea.classList.add("description");
     }
-    if (locked) {
+    if (locked || isUploadableKey(keyLower)) {
       valueArea.readOnly = true;
       valueArea.classList.add("readonly");
     }
