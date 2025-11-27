@@ -171,15 +171,18 @@ section {
   margin: 0;
   font-size: 18px;
 }
+
 .collection-title {
   display: flex;
   align-items: center;
   gap: 8px;
   white-space: nowrap;
 }
+
 .collection-title-text {
   white-space: nowrap;
 }
+
 .collection-total-count {
   font-size: 12px;
   padding: 2px 8px;
@@ -195,7 +198,7 @@ section {
   justify-content: space-between;
 }
 
-.panel-header.with-action > div {
+.panel-header.with-action>div {
   flex: 1;
 }
 
@@ -205,6 +208,7 @@ section {
   align-items: center;
   justify-content: flex-end;
 }
+
 .panel-actions button {
   flex: 0 0 auto;
 }
@@ -222,19 +226,23 @@ section {
   border-color: var(--accent);
   color: var(--accent);
 }
+
 .ghost.active {
   border-color: var(--accent);
   background: #122449;
 }
+
 .ghost.disabled,
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
 .ghost.danger {
   border-color: #f87171;
   color: #f87171;
 }
+
 .ghost.danger:hover {
   background: rgba(248, 113, 113, 0.1);
 }
@@ -271,11 +279,13 @@ button:disabled {
   background: #122449;
   color: #ffffff;
 }
+
 .list-item-multiline {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
+
 .game-name-line {
   font-weight: 600;
   display: flex;
@@ -283,12 +293,14 @@ button:disabled {
   justify-content: space-between;
   gap: 8px;
 }
+
 .game-status {
   flex: 0 0 auto;
   font-size: 16px;
   min-width: 20px;
   text-align: right;
 }
+
 .game-name-left {
   flex: 1;
   min-width: 0;
@@ -296,18 +308,22 @@ button:disabled {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .game-missing-flag {
   flex: 0 0 auto;
   color: #ffadad;
 }
+
 .game-path-line {
   font-size: 12px;
   color: var(--text-muted);
   word-break: break-all;
 }
+
 .game-path-line.missing-path {
   color: #ffadad;
 }
+
 .collection-name-line {
   font-weight: 600;
   display: flex;
@@ -315,22 +331,26 @@ button:disabled {
   justify-content: space-between;
   gap: 8px;
 }
+
 .collection-path-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+
 .collection-path-line {
   font-size: 12px;
   color: var(--text-muted);
   word-break: break-all;
   flex: 1;
 }
+
 .collection-ext-line {
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
 }
+
 .collection-count {
   padding: 2px 8px;
   border-radius: 12px;
@@ -340,9 +360,11 @@ button:disabled {
   min-width: 28px;
   text-align: right;
 }
+
 .missing-game .game-name-left {
   color: #ffadad;
 }
+
 .missing-game .game-missing-flag {
   color: #ff6b6b;
 }
@@ -786,18 +808,24 @@ button:disabled {
 }
 
 .edit-field-value {
-  min-height: 60px;
-  resize: vertical;
+  min-height: 36px;
+  max-height: 36px;
+  resize: none;
   white-space: pre-wrap;
   width: 100%;
+  overflow-y: auto;
 }
+
 .edit-field-value.readonly {
   background: #101623;
   color: var(--text-muted);
   cursor: not-allowed;
 }
+
 .edit-field-value.description {
   min-height: 120px;
+  max-height: none;
+  resize: vertical;
 }
 
 .edit-field-row .remove-field {
@@ -812,6 +840,7 @@ button:disabled {
   width: 100%;
   text-align: center;
 }
+
 .remove-placeholder {
   width: 100%;
   height: 1px;
@@ -914,6 +943,7 @@ button:disabled {
     min-width: auto;
   }
 }
+
 .delete-form {
   display: flex;
   flex-direction: column;

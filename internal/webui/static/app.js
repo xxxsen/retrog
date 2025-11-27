@@ -66,23 +66,16 @@
     "sort_name",
     "sort_title",
     "file",
-    "files",
     "developer",
-    "developers",
     "publisher",
-    "publishers",
     "genre",
-    "genres",
     "tag",
-    "tags",
     "summary",
     "description",
     "players",
     "release",
     "rating",
     "launch",
-    "command",
-    "workdir",
     "cwd",
     "assets.boxfront",
     "assets.boxback",
@@ -113,6 +106,10 @@
   let showMissingGames = false;
   let searchQuery = "";
   let searchCollectionId = "";
+
+  if (editAddField) {
+    editAddField.style.display = "none";
+  }
 
   function isMultilineTextKey(key) {
     return MULTILINE_TEXT_KEYS.has((key || "").trim().toLowerCase());
@@ -1116,9 +1113,8 @@
       countLine.textContent = `子ROM数量: ${Number.isFinite(Number(data.subrom_count)) ? data.subrom_count : "未知"}`;
       romInfoFiles.appendChild(countLine);
       const datCountLine = document.createElement("div");
-      datCountLine.textContent = `Dat子ROM数量: ${
-        Number.isFinite(Number(data.dat_subrom_count)) ? data.dat_subrom_count : "未知"
-      }`;
+      datCountLine.textContent = `Dat子ROM数量: ${Number.isFinite(Number(data.dat_subrom_count)) ? data.dat_subrom_count : "未知"
+        }`;
       romInfoFiles.appendChild(datCountLine);
       if (Array.isArray(data.parents) && data.parents.length) {
         const parentLine = document.createElement("div");
@@ -1204,7 +1200,6 @@
   function populateEditFields(game) {
     editFields.innerHTML = "";
     const fileField = findFieldByKey(game?.fields, "file") || findFieldByKey(game?.fields, "files");
-    const multipleFileValues = fileField && fileField.values && fileField.values.length > 1;
     const fallback = { key: "game", values: [game && game.title ? game.title : ""] };
     const fields = game && Array.isArray(game.fields) && game.fields.length ? game.fields : [fallback];
     fields.sort(fieldSortComparator);
@@ -1212,7 +1207,7 @@
       const keyLower = (field.key || "").toLowerCase();
       const isIndexField = keyLower === INDEX_FIELD_KEY;
       const isFileField = keyLower === "file" || keyLower === "files";
-      const shouldLock = isIndexField || (isFileField && multipleFileValues);
+      const shouldLock = isIndexField;
       editFields.appendChild(
         createEditableFieldRow(field, {
           isNew: false,
@@ -1489,9 +1484,9 @@
       x_index_id: collection.x_index_id,
       originalFields: Array.isArray(collection.fields)
         ? collection.fields.map((field) => ({
-            key: field?.key || "",
-            values: Array.isArray(field?.values) ? [...field.values] : [],
-          }))
+          key: field?.key || "",
+          values: Array.isArray(field?.values) ? [...field.values] : [],
+        }))
         : [],
     };
     populateCollectionForm(collection);
@@ -1901,21 +1896,7 @@
       }
     });
   }
-  if (editAddField) {
-    editAddField.addEventListener("click", () => {
-      if (editFields) {
-        const used = getUsedKeys();
-        const available = KNOWN_GAME_FIELDS.filter((name) => !used.has(name.toLowerCase()));
-        if (!available.length) {
-          setEditStatus("所有字段均已存在", true);
-          return;
-        }
-        editFields.appendChild(
-          createEditableFieldRow({ key: "", values: [] }, { isNew: true, disabledKeys: used }),
-        );
-      }
-    });
-  }
+  // 新增字段入口已移除
   if (editCancel) {
     editCancel.addEventListener("click", () => {
       closeEditModal();
@@ -1936,30 +1917,30 @@
   }
   init();
 })();
-  function fieldSortComparator(a, b) {
-    if (!a || !b) {
-      return 0;
-    }
-    const aKey = (a.key || "").toLowerCase();
-    const bKey = (b.key || "").toLowerCase();
-    const order = ["x-index-id", "x-id", "game", "file", "files"];
-    const aIndex = order.indexOf(aKey);
-    const bIndex = order.indexOf(bKey);
-    if (aIndex !== -1 || bIndex !== -1) {
-      if (aIndex === -1) {
-        return 1;
-      }
-      if (bIndex === -1) {
-        return -1;
-      }
-      if (aIndex !== bIndex) {
-        return aIndex - bIndex;
-      }
-    }
-    const aIsAsset = aKey.startsWith("assets.");
-    const bIsAsset = bKey.startsWith("assets.");
-    if (aIsAsset !== bIsAsset) {
-      return aIsAsset ? 1 : -1;
-    }
-    return aKey.localeCompare(bKey);
+function fieldSortComparator(a, b) {
+  if (!a || !b) {
+    return 0;
   }
+  const aKey = (a.key || "").toLowerCase();
+  const bKey = (b.key || "").toLowerCase();
+  const order = ["x-index-id", "x-id", "game", "file", "files"];
+  const aIndex = order.indexOf(aKey);
+  const bIndex = order.indexOf(bKey);
+  if (aIndex !== -1 || bIndex !== -1) {
+    if (aIndex === -1) {
+      return 1;
+    }
+    if (bIndex === -1) {
+      return -1;
+    }
+    if (aIndex !== bIndex) {
+      return aIndex - bIndex;
+    }
+  }
+  const aIsAsset = aKey.startsWith("assets.");
+  const bIsAsset = bKey.startsWith("assets.");
+  if (aIsAsset !== bIsAsset) {
+    return aIsAsset ? 1 : -1;
+  }
+  return aKey.localeCompare(bKey);
+}
