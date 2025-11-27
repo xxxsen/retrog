@@ -49,17 +49,17 @@
   const COLLECTION_FIELD_CONFIG = [
     { id: "collection-x-index-id", key: "x-index-id", readonly: true },
     { id: "collection-name", key: "collection" },
-    { id: "collection-sortby", key: "sort-by", aliases: ["sortby"] },
-    { id: "collection-extensions", key: "extensions", aliases: ["extension"] },
-    { id: "collection-ignore-extensions", key: "ignore-extensions", aliases: ["ignore-extension"] },
-    { id: "collection-ignore-files", key: "ignore-files", aliases: ["ignore-file"] },
-    { id: "collection-files", key: "files", aliases: ["file"] },
+    { id: "collection-sortby", key: "sort-by" },
+    { id: "collection-extension", key: "extension" },
+    { id: "collection-ignore-extension", key: "ignore-extension" },
+    { id: "collection-ignore-file", key: "ignore-file" },
+    { id: "collection-file", key: "file" },
     { id: "collection-regex", key: "regex" },
-    { id: "collection-short-name", key: "shortname", aliases: ["short_name"] },
+    { id: "collection-short-name", key: "shortname" },
     { id: "collection-summary", key: "summary" },
-    { id: "collection-description", key: "description", aliases: ["desc"] },
-    { id: "collection-workdir", key: "workdir", aliases: ["cwd"] },
-    { id: "collection-launch", key: "launch", aliases: ["command"] },
+    { id: "collection-description", key: "description" },
+    { id: "collection-cwd", key: "cwd" },
+    { id: "collection-launch", key: "launch" },
   ];
   const KNOWN_GAME_FIELDS = [
     "game",
@@ -1481,22 +1481,6 @@
     );
   }
 
-  function findFieldByKeyWithAliases(fields, key, aliases = []) {
-    const direct = findFieldByKey(fields, key);
-    if (direct) {
-      return direct;
-    }
-    if (Array.isArray(aliases)) {
-      for (const alias of aliases) {
-        const match = findFieldByKey(fields, alias);
-        if (match) {
-          return match;
-        }
-      }
-    }
-    return null;
-  }
-
   function createEditableFieldRow(field = { key: "", values: [] }, options = {}) {
     const row = document.createElement("div");
     row.className = "edit-field-row";
@@ -1806,7 +1790,7 @@
       if (!el) {
         return;
       }
-      const field = findFieldByKeyWithAliases(collection?.fields, cfg.key, cfg.aliases || []);
+      const field = findFieldByKey(collection?.fields, cfg.key);
       el.value = field && Array.isArray(field.values) ? field.values.join("\n") : "";
       if (cfg.readonly) {
         el.readOnly = true;
@@ -1830,9 +1814,6 @@
       const values = normalizeValuesForPayload(cfg.key, el.value);
       const canonicalKey = (cfg.key || "").toLowerCase();
       handledKeys.add(canonicalKey);
-      if (Array.isArray(cfg.aliases)) {
-        cfg.aliases.forEach((alias) => handledKeys.add(String(alias || "").toLowerCase()));
-      }
       if (values.length) {
         pending.push({ key: cfg.key, values });
       }
