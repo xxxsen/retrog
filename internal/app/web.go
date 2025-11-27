@@ -261,12 +261,13 @@ func (c *WebCommand) PreRun(ctx context.Context) error {
 		return err
 	}
 	c.assets = store
-	uploadDir, err := os.MkdirTemp("", "retrog_upload")
-	if err != nil {
+	tempRoot := filepath.Join(os.TempDir(), "retrog_upload")
+	_ = os.RemoveAll(tempRoot)
+	if err := os.MkdirAll(tempRoot, 0o755); err != nil {
 		return err
 	}
-	c.uploadDir = uploadDir
-	c.assets.AddAllowedRoot(uploadDir)
+	c.uploadDir = tempRoot
+	c.assets.AddAllowedRoot(tempRoot)
 
 	exts, err := parseExts(c.ext)
 	if err != nil {
