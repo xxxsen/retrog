@@ -811,6 +811,17 @@
     return parts.length ? parts[parts.length - 1] : trimmed;
   }
 
+  function normalizeUploadName(value) {
+    const label = formatUploadLabel(value || "");
+    if (!label) {
+      return "";
+    }
+    const base = label.split(/[/\\]/).pop() || label;
+    const prefixMatch = base.match(/^(\d{8,})[_-]+(.*)$/);
+    const core = prefixMatch && prefixMatch[2] ? prefixMatch[2] : base;
+    return core.toLowerCase();
+  }
+
   function updateRowKey(row, newKey, game) {
     const state = getRowState(row);
     const rawKey = (newKey || "").trim();
@@ -953,10 +964,35 @@
   }
 
   async function uploadFilesForRow(row, files, key, context) {
+    let skippedDuplicate = false;
+    const seenNames = new Set();
+    if (isFileKey(key)) {
+      const state = getRowState(row);
+      const existingValues = state && state.valueArea ? normalizeValuesForPayload(key, state.valueArea.value) : [];
+      existingValues.forEach((v) => {
+        const name = normalizeUploadName(v);
+        if (name) {
+          seenNames.add(name);
+        }
+      });
+    }
     for (const file of files) {
+      const baseName = normalizeUploadName(file?.name || "");
+      if (isFileKey(key) && baseName) {
+        if (seenNames.has(baseName)) {
+          skippedDuplicate = true;
+          setRowFeedback(row, `已存在同名文件: ${file.name}`, true);
+          continue;
+        }
+        seenNames.add(baseName);
+      }
       // sequential uploads to preserve order and status messaging
       // eslint-disable-next-line no-await-in-loop
       await uploadFileForRow(row, file, key, context, { append: isFileKey(key) });
+      setRowFeedback(row, "", false);
+    }
+    if (skippedDuplicate) {
+      setEditStatus("部分同名文件已跳过", true);
     }
   }
 
