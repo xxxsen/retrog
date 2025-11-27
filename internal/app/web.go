@@ -41,6 +41,8 @@ type WebCommand struct {
 	fbneoDat        string
 	mameDat         string
 	biosDir         string
+	ext             string
+	exts            []string
 	uploadDir       string
 	server          *http.Server
 	assets          *assetStore
@@ -232,6 +234,7 @@ func (c *WebCommand) Init(f *pflag.FlagSet) {
 	f.StringVar(&c.bind, "bind", ":8080", "HTTP 监听地址，例如 0.0.0.0:8080")
 	f.StringVar(&c.datDir, "dat", "", "DAT 文件目录，包含 fbneo.dat / mame.dat，用于校验 ROM")
 	f.StringVar(&c.biosDir, "bios", "", "BIOS 目录，用于 rom 校验父/依赖")
+	f.StringVar(&c.ext, "ext", "zip,7z", "ROM 扫描扩展名，逗号分隔，例如 zip,7z")
 }
 
 func (c *WebCommand) PreRun(ctx context.Context) error {
@@ -264,6 +267,12 @@ func (c *WebCommand) PreRun(ctx context.Context) error {
 	}
 	c.uploadDir = uploadDir
 	c.assets.AddAllowedRoot(uploadDir)
+
+	exts, err := parseExts(c.ext)
+	if err != nil {
+		return err
+	}
+	c.exts = exts
 	return nil
 }
 
@@ -911,7 +920,10 @@ func (c *WebCommand) applyRomChecks(ctx context.Context, cols []*collectionPaylo
 
 	resultsByFamily := make(map[string]map[string]*romStatusSummary)
 	for family, tester := range testers {
-		exts := collectFamilyExtensions(cols, family)
+		exts := c.exts
+		if len(exts) == 0 {
+			exts = collectFamilyExtensions(cols, family)
+		}
 		res, err := tester.TestDir(stdContextAdapter{ctx}, c.root, c.biosDir, exts)
 		if err != nil {
 			return fmt.Errorf("rom check (%s) failed: %w", family, err)
@@ -943,10 +955,9 @@ func (c *WebCommand) applyRomChecks(ctx context.Context, cols []*collectionPaylo
 			status := &romStatusSummary{Status: romStatusNotTested, Emoji: "🔘"}
 			if family != "" {
 				if m, ok := resultsByFamily[family]; ok {
-					if key := normalizeRomPathKey(game.RomPath); key != "" {
-						if res, ok := m[key]; ok {
-							status = res
-						}
+					key := normalizeRomPathKey(game.RomPath)
+					if res, ok := m[key]; ok && key != "" {
+						status = res
 					}
 				}
 			}

@@ -41,6 +41,12 @@ type Entry struct {
 }
 
 var defaultFieldMapping = map[string]string{
+	"files":                "file",
+	"workdir":              "cwd",
+	"command":              "launch",
+	"ignore-files":         "ignore-file",
+	"ignore-extensions":    "ignore-extension",
+	"extensions":           "extension",
 	"assets.box_front":     "assets.boxfront",
 	"assets.boxfront":      "assets.boxfront",
 	"assets.boxart":        "assets.boxfront",
