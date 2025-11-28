@@ -187,6 +187,7 @@ type romInfoResponse struct {
 	SubRomFiles []*subRomFileInfo `json:"subrom_files,omitempty"`
 	DatSubRoms  []*subRomPayload  `json:"dat_subroms,omitempty"`
 	RomFiles    []string          `json:"rom_files,omitempty"`
+	RomFilesInfo []*romFileInfo   `json:"rom_files_info,omitempty"`
 	SelectedRom string            `json:"selected_rom,omitempty"`
 	Message     string            `json:"message,omitempty"`
 }
@@ -212,6 +213,11 @@ type subRomPayload struct {
 	State      string `json:"state"`
 	StateEmoji string `json:"state_emoji"`
 	Message    string `json:"message,omitempty"`
+}
+
+type romFileInfo struct {
+	Path    string `json:"path"`
+	Missing bool   `json:"missing"`
 }
 
 type assetStore struct {
@@ -2272,11 +2278,21 @@ func buildRomInfoResponse(coll *collectionPayload, game *gamePayload, romPath st
 		Emoji:       "🔘",
 		Core:        coll.Core,
 		RomFiles:    make([]string, 0, len(candidates)),
+		RomFilesInfo: make([]*romFileInfo, 0, len(candidates)),
 		SelectedRom: filepath.ToSlash(romPath),
 		RomPath:     filepath.ToSlash(romPath),
 	}
 	for _, c := range candidates {
-		resp.RomFiles = append(resp.RomFiles, filepath.ToSlash(c))
+		normalized := filepath.ToSlash(c)
+		missing := false
+		if _, err := os.Stat(filepath.FromSlash(normalized)); err != nil {
+			missing = true
+		}
+		resp.RomFiles = append(resp.RomFiles, normalized)
+		resp.RomFilesInfo = append(resp.RomFilesInfo, &romFileInfo{
+			Path:    normalized,
+			Missing: missing,
+		})
 	}
 	if root != "" && strings.TrimSpace(romPath) != "" {
 		if rel, err := filepath.Rel(root, filepath.FromSlash(romPath)); err == nil {

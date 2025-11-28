@@ -1300,18 +1300,38 @@
     if (!data) {
       return;
     }
+    const romFilesInfo = Array.isArray(data.rom_files_info) ? data.rom_files_info : null;
     if (romInfoSelect) {
       romInfoSelect.innerHTML = "";
       const files = Array.isArray(data.rom_files) ? data.rom_files : [];
-      files.forEach((path) => {
-        const opt = document.createElement("option");
-        opt.value = path;
-        opt.textContent = path ? path.split("/").pop() : path;
-        if (data.selected_rom && data.selected_rom === path) {
-          opt.selected = true;
-        }
-        romInfoSelect.appendChild(opt);
-      });
+      if (romFilesInfo) {
+        romFilesInfo.forEach((item) => {
+          if (!item) {
+            return;
+          }
+          const opt = document.createElement("option");
+          opt.value = item.path;
+          const label = item.path ? item.path.split("/").pop() : item.path;
+          opt.textContent = item.missing ? `${label} (缺失)` : label;
+          if (item.missing) {
+            opt.style.color = "#ff6b6b";
+          }
+          if (data.selected_rom && data.selected_rom === item.path) {
+            opt.selected = true;
+          }
+          romInfoSelect.appendChild(opt);
+        });
+      } else {
+        files.forEach((path) => {
+          const opt = document.createElement("option");
+          opt.value = path;
+          opt.textContent = path ? path.split("/").pop() : path;
+          if (data.selected_rom && data.selected_rom === path) {
+            opt.selected = true;
+          }
+          romInfoSelect.appendChild(opt);
+        });
+      }
     }
     if (romInfoFiles) {
       romInfoFiles.innerHTML = "";
