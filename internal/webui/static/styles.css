@@ -280,6 +280,26 @@ button:disabled {
   color: #ffffff;
 }
 
+.virtual-collection {
+  background: #101829;
+  border-color: #223455;
+}
+
+.child-collection {
+  padding-left: 24px;
+  position: relative;
+}
+
+.child-collection::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: var(--border);
+}
+
 .list-item-multiline {
   display: flex;
   flex-direction: column;
