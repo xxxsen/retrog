@@ -2011,6 +2011,9 @@ func normalizeFieldValueForDisplay(key, value string) string {
 	if isSortByKey(key) {
 		return formatSortByValue(value)
 	}
+	if isAssetFieldKey(key) {
+		return normalizePathSeparators(value)
+	}
 	if isMultilineTextKey(key) {
 		return decodeEscapedNewlines(value)
 	}
@@ -2025,6 +2028,11 @@ func normalizeFieldValuesForKey(key string, values []string) []string {
 	if isSortByKey(key) {
 		for idx, v := range normalized {
 			normalized[idx] = formatSortByValue(v)
+		}
+	}
+	if isAssetFieldKey(key) {
+		for idx, v := range normalized {
+			normalized[idx] = normalizePathSeparators(v)
 		}
 	}
 	if isMultilineTextKey(key) {
@@ -2078,6 +2086,18 @@ func isMultilineTextKey(key string) bool {
 
 func isSortByKey(key string) bool {
 	return strings.EqualFold(strings.TrimSpace(key), "sort-by")
+}
+
+func isAssetFieldKey(key string) bool {
+	key = strings.TrimSpace(strings.ToLower(key))
+	return strings.HasPrefix(key, "assets.")
+}
+
+func normalizePathSeparators(value string) string {
+	if strings.Contains(value, "\\") {
+		return strings.ReplaceAll(value, "\\", "/")
+	}
+	return value
 }
 
 func formatSortByValue(value string) string {
@@ -2778,6 +2798,7 @@ func resolveAssetPath(baseDir, value string) string {
 	if trimmed == "" {
 		return ""
 	}
+	trimmed = normalizePathSeparators(trimmed)
 	if filepath.IsAbs(trimmed) {
 		return filepath.Clean(trimmed)
 	}

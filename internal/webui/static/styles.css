@@ -771,7 +771,7 @@ button:disabled {
 
 
 .edit-fields {
-  max-height: 420px;
+  max-height: 520px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
