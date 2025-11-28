@@ -1258,7 +1258,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				DisplayName:  fmt.Sprintf("%s(%s)", name, dirName),
 				MetadataPath: metadataPath,
 				RelativePath: relDir,
-				SortKey:      strings.TrimSpace(typed.SortBy),
+				SortKey:      formatSortByValue(typed.SortBy),
 				Extensions:   parseCollectionExtensions(blk),
 				Core:         deriveCore(typed.Launch),
 				Fields:       convertBlockFields(blk),
@@ -1313,7 +1313,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				RomPath:     romPath,
 				RelRomPath:  relRomPath,
 				DisplayName: display,
-				SortKey:     strings.TrimSpace(typed.SortBy),
+				SortKey:     formatSortByValue(typed.SortBy),
 				RomMissing:  romMissing,
 				HasBoxArt:   hasBoxArt,
 				HasVideo:    hasVideo,
@@ -1976,6 +1976,9 @@ func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Docum
 }
 
 func normalizeFieldValueForDisplay(key, value string) string {
+	if isSortByKey(key) {
+		return formatSortByValue(value)
+	}
 	if isMultilineTextKey(key) {
 		return decodeEscapedNewlines(value)
 	}
@@ -1986,6 +1989,11 @@ func normalizeFieldValuesForKey(key string, values []string) []string {
 	normalized := normalizeFieldValues(values)
 	if len(normalized) == 0 {
 		return nil
+	}
+	if isSortByKey(key) {
+		for idx, v := range normalized {
+			normalized[idx] = formatSortByValue(v)
+		}
 	}
 	if isMultilineTextKey(key) {
 		joined := strings.Join(normalized, "\n")
@@ -2034,6 +2042,27 @@ func isMultilineTextKey(key string) bool {
 	default:
 		return false
 	}
+}
+
+func isSortByKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), "sort-by")
+}
+
+func formatSortByValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return trimmed
+	}
+	for _, r := range trimmed {
+		if r < '0' || r > '9' {
+			return trimmed
+		}
+	}
+	num, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	return fmt.Sprintf("%06d", num)
 }
 
 func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile string, sourcePath, stagedName, assetKey string) (string, error) {
