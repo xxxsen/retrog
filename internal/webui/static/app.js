@@ -421,7 +421,7 @@
         pathRow.className = "collection-path-row";
         const pathLine = document.createElement("div");
         pathLine.className = "collection-path-line";
-        pathLine.textContent = "虚拟目录 (同名合集折叠)";
+        pathLine.textContent = "虚拟目录 (双击展开)";
         const extLine = document.createElement("div");
         extLine.className = "collection-ext-line";
         extLine.textContent = formatExtensions(collection.extensions);
@@ -437,11 +437,6 @@
           currentVirtualId = collection.id;
           currentCollectionId = null;
           currentGameId = null;
-          if (expandedVirtuals.has(collection.id)) {
-            expandedVirtuals.delete(collection.id);
-          } else {
-            expandedVirtuals.add(collection.id);
-          }
           if (searchQuery) {
             searchQuery = "";
             if (searchInput) {
@@ -458,6 +453,15 @@
           renderGames();
           renderFields();
           renderMedia();
+        });
+        item.addEventListener("dblclick", (event) => {
+          event.preventDefault();
+          if (expandedVirtuals.has(collection.id)) {
+            expandedVirtuals.delete(collection.id);
+          } else {
+            expandedVirtuals.add(collection.id);
+          }
+          renderCollections();
         });
         collectionList.appendChild(item);
         if (expanded && Array.isArray(collection.children)) {
