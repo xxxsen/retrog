@@ -286,12 +286,12 @@ func buildParentChain(def romDefinition, all map[string]romDefinition) []string 
 }
 
 func validateDefinition(def romDefinition, files []archiveFile) (greens, yellows, reds []*SubRomFileTestResult) {
-	indexFull := make(map[string]archiveFile)
+	indexFull := make(map[string][]archiveFile)
 	indexBase := make(map[string][]archiveFile)
 	indexCRC := make(map[string][]archiveFile)
 	for _, f := range files {
 		lower := strings.ToLower(f.Name)
-		indexFull[lower] = f
+		indexFull[lower] = append(indexFull[lower], f)
 		base := strings.ToLower(filepath.Base(f.Name))
 		indexBase[base] = append(indexBase[base], f)
 		crc := fmt.Sprintf("%08x", f.CRC32)
@@ -327,15 +327,21 @@ func validateDefinition(def romDefinition, files []archiveFile) (greens, yellows
 			return false, false
 		}
 
-		// full name match
-		if f, ok := indexFull[name]; ok {
-			matched, _ := checkMatch(f)
-			if matched {
-				if result.TestState == SubRomStateGreen {
-					greens = append(greens, &result)
-				} else {
-					yellows = append(yellows, &result)
+		// full name match (consider all duplicates)
+		if candidates, ok := indexFull[name]; ok && len(candidates) > 0 {
+			found := false
+			for _, f := range candidates {
+				if matched, _ := checkMatch(f); matched {
+					found = true
+					if result.TestState == SubRomStateGreen {
+						greens = append(greens, &result)
+					} else {
+						yellows = append(yellows, &result)
+					}
+					break
 				}
+			}
+			if found {
 				continue
 			}
 		}
@@ -375,9 +381,9 @@ func validateDefinition(def romDefinition, files []archiveFile) (greens, yellows
 		}
 
 		// same-name but mismatched content
-		if f, ok := indexFull[name]; ok {
+		if candidates := indexFull[name]; len(candidates) > 0 {
 			result.TestState = SubRomStateYellow
-			result.TestMessage = buildMismatchMessage(rom, f)
+			result.TestMessage = buildMismatchMessage(rom, candidates[0])
 			yellows = append(yellows, &result)
 			goto nextRom
 		}
