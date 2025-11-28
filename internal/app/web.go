@@ -2,6 +2,7 @@ package app
 
 import (
 	"archive/zip"
+	"compress/gzip"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -406,10 +407,7 @@ func (c *WebCommand) handleCollections(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(c.collectionsSnapshot())
+	respondJSON(w, r, http.StatusOK, c.collectionsSnapshot())
 }
 
 func (c *WebCommand) handleUpdateCollection(w http.ResponseWriter, r *http.Request) {
@@ -444,8 +442,7 @@ func (c *WebCommand) handleUpdateCollection(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "collection not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(&collectionUpdateResponse{Collection: coll})
+	respondJSON(w, r, http.StatusOK, &collectionUpdateResponse{Collection: coll})
 }
 
 func (c *WebCommand) handleAsset(w http.ResponseWriter, r *http.Request) {
@@ -495,8 +492,7 @@ func (c *WebCommand) handleUpdateGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "updated game not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(&gameUpdateResponse{Collection: coll, Game: game})
+	respondJSON(w, r, http.StatusOK, &gameUpdateResponse{Collection: coll, Game: game})
 }
 
 func (c *WebCommand) handleCreateGame(w http.ResponseWriter, r *http.Request) {
@@ -528,8 +524,7 @@ func (c *WebCommand) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "created game not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(&gameUpdateResponse{Collection: coll, Game: game})
+	respondJSON(w, r, http.StatusOK, &gameUpdateResponse{Collection: coll, Game: game})
 }
 
 func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
@@ -595,8 +590,7 @@ func (c *WebCommand) handleUploadMedia(w http.ResponseWriter, r *http.Request) {
 		FilePath: token,
 		Asset:    payload,
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(resp)
+	respondJSON(w, r, http.StatusOK, resp)
 }
 
 func (c *WebCommand) handleRomInfo(w http.ResponseWriter, r *http.Request) {
@@ -658,8 +652,7 @@ func (c *WebCommand) handleRomInfo(w http.ResponseWriter, r *http.Request) {
 
 	entries, _ := listArchiveEntries(selectedPath)
 	resp := buildRomInfoResponse(coll, game, selectedPath, resolvedFiles, summary, entries, c.root)
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(resp)
+	respondJSON(w, r, http.StatusOK, resp)
 }
 
 func (c *WebCommand) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
@@ -690,8 +683,7 @@ func (c *WebCommand) handleDeleteGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	coll := c.findCollectionByPath(filepath.ToSlash(metadataPath))
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(&deleteGameResponse{Collection: coll})
+	respondJSON(w, r, http.StatusOK, &deleteGameResponse{Collection: coll})
 }
 
 func (c *WebCommand) stageMediaUpload(filename string, source multipart.File) (string, string, error) {
@@ -2961,4 +2953,27 @@ func assetFileBaseFromKey(key string) string {
 
 func init() {
 	RegisterRunner("web", func() IRunner { return NewWebCommand() })
+}
+
+func respondJSON(w http.ResponseWriter, r *http.Request, status int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	writer := io.Writer(w)
+	var gz *gzip.Writer
+	if acceptsGzip(r) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz = gzip.NewWriter(w)
+		writer = gz
+	}
+	w.WriteHeader(status)
+	enc := json.NewEncoder(writer)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(payload)
+	if gz != nil {
+		_ = gz.Close()
+	}
+}
+
+func acceptsGzip(r *http.Request) bool {
+	enc := r.Header.Get("Accept-Encoding")
+	return strings.Contains(enc, "gzip")
 }
