@@ -97,6 +97,8 @@
   let editContext = null;
   let collectionEditContext = null;
   let romInfoData = null;
+  let currentVirtualId = null;
+  const expandedVirtuals = new Set();
   const collectionExtensions = new Map();
   const MULTILINE_TEXT_KEYS = new Set(["description", "summary", "desc"]);
   const FIELD_PLACEHOLDERS = {
@@ -107,6 +109,7 @@
   };
   const REQUIRED_GAME_KEYS = new Set(["game", "file", "assets.boxfront"]);
   const COLLAPSIBLE_FIELD_KEYS = new Set([
+    "sort-by",
     "sort_name",
     "sort_title",
     "tag",
@@ -197,6 +200,55 @@
         .map((ext) => (ext.startsWith(".") ? ext : `.${ext}`));
       collectionExtensions.set(collection.id, normalized);
     });
+  }
+
+  function buildVirtualCollections() {
+    const grouped = new Map();
+    collections.forEach((collection) => {
+      if (!collection) return;
+      const name = (collection.name || "").trim();
+      const key = name.toLowerCase();
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
+      }
+      grouped.get(key).push(collection);
+    });
+    const virtuals = [];
+    grouped.forEach((list, key) => {
+      if (!Array.isArray(list) || list.length < 2) {
+        return;
+      }
+      const name = list[0]?.name || "";
+      const extensions = [];
+      const extSet = new Set();
+      let available = 0;
+      let total = 0;
+      list.forEach((c) => {
+        available += Number(c.available_games) || 0;
+        total += Number(c.total_games) || 0;
+        (c.extensions || []).forEach((ext) => {
+          const normalized = (ext || "").trim().toLowerCase();
+          if (!normalized || extSet.has(normalized)) {
+            return;
+          }
+          extSet.add(normalized);
+          if (extensions.length < 6) {
+            extensions.push(normalized);
+          }
+        });
+      });
+      virtuals.push({
+        id: `virtual-${key}`,
+        name,
+        display_name: name,
+        available_games: available,
+        total_games: total,
+        extensions,
+        isVirtual: true,
+        children: list,
+      });
+    });
+    return virtuals;
   }
 
   function getCollectionExtensions(collectionId) {
@@ -293,76 +345,220 @@
 
   function renderCollections() {
     collections.sort(compareCollections);
+    const virtuals = buildVirtualCollections();
     collectionList.innerHTML = "";
     const query = (collectionSearchQuery || "").trim().toLowerCase();
-    const visibleCollections = collections.filter((collection) =>
-      matchesCollectionSearch(collection, query),
+    // 若当前选中的真实目录属于某个虚拟目录，保持其父目录展开
+    if (currentCollectionId) {
+      virtuals.forEach((v) => {
+        if (Array.isArray(v.children) && v.children.some((c) => c && c.id === currentCollectionId)) {
+          expandedVirtuals.add(v.id);
+          if (!currentVirtualId) {
+            currentVirtualId = v.id;
+          }
+        }
+      });
+    }
+    const multiNames = new Set(virtuals.map((v) => (v.name || "").toLowerCase()));
+    const singletonCollections = collections.filter(
+      (c) => !multiNames.has((c.name || "").toLowerCase()),
     );
+    const renderItems = [];
+    virtuals.forEach((v) => {
+      if (v.children && v.children.length) {
+        renderItems.push(v);
+      }
+    });
+    renderItems.push(...singletonCollections);
+    const visibleCollections = renderItems.filter((collection) => {
+      if (collection.isVirtual) {
+        if (matchesCollectionSearch(collection, query)) {
+          return true;
+        }
+        return collection.children.some((child) => matchesCollectionSearch(child, query));
+      }
+      return matchesCollectionSearch(collection, query);
+    });
     updateCollectionTotalCount();
     if (!visibleCollections.length) {
       collectionEmpty.textContent = query ? "没有匹配的合集" : "未在目录中找到 metadata.pegasus.txt";
       collectionEmpty.style.display = "block";
       currentCollectionId = null;
+      currentVirtualId = null;
       currentGameId = null;
       updateActionButtons();
       renderGames();
       return;
     }
-    if (!currentCollectionId || !visibleCollections.some((c) => c.id === currentCollectionId)) {
-      currentCollectionId = visibleCollections[0].id;
+    const hasCurrentReal = Boolean(currentCollectionId);
+    const hasCurrentVirtual = currentVirtualId && visibleCollections.some((c) => c.id === currentVirtualId);
+    if (!hasCurrentReal && !hasCurrentVirtual) {
+      const first = visibleCollections[0];
+      if (first.isVirtual) {
+        currentVirtualId = first.id;
+        currentCollectionId = null;
+      } else {
+        currentCollectionId = first.id;
+        currentVirtualId = null;
+      }
     }
     collectionEmpty.style.display = "none";
     visibleCollections.forEach((collection) => {
-      const item = document.createElement("li");
-      item.className = "list-item list-item-multiline";
-      const nameLine = document.createElement("div");
-      nameLine.className = "collection-name-line";
-      const counts = getCollectionCounts(collection);
-      const countBadge = document.createElement("span");
-      countBadge.className = "collection-count";
-      countBadge.textContent = `${counts.available}/${counts.total}`;
-      const nameText = document.createElement("span");
-      nameText.textContent = collection.name || collection.display_name || "";
-      nameLine.appendChild(nameText);
-      nameLine.appendChild(countBadge);
-      const pathRow = document.createElement("div");
-      pathRow.className = "collection-path-row";
-      const pathLine = document.createElement("div");
-      pathLine.className = "collection-path-line";
-      const coreText = formatCore(collection);
-      const dirText = collection.relative_path || collection.dir_name || "";
-      pathLine.textContent = coreText ? `${dirText} (${coreText})` : dirText;
-      const extLine = document.createElement("div");
-      extLine.className = "collection-ext-line";
-      extLine.textContent = formatExtensions(collection.extensions);
-      pathRow.appendChild(pathLine);
-      pathRow.appendChild(extLine);
-      item.appendChild(nameLine);
-      item.appendChild(pathRow);
-      if (collection.id === currentCollectionId) {
-        item.classList.add("active");
+      if (collection.isVirtual) {
+        const item = document.createElement("li");
+        item.className = "list-item list-item-multiline virtual-collection";
+        const nameLine = document.createElement("div");
+        nameLine.className = "collection-name-line";
+        const counts = { available: collection.available_games || 0, total: collection.total_games || 0 };
+        const countBadge = document.createElement("span");
+        countBadge.className = "collection-count";
+        countBadge.textContent = `${counts.available}/${counts.total}`;
+        const nameText = document.createElement("span");
+        nameText.textContent = collection.name || collection.display_name || "";
+        nameLine.appendChild(nameText);
+        nameLine.appendChild(countBadge);
+        const pathRow = document.createElement("div");
+        pathRow.className = "collection-path-row";
+        const pathLine = document.createElement("div");
+        pathLine.className = "collection-path-line";
+        pathLine.textContent = "虚拟目录 (同名合集折叠)";
+        const extLine = document.createElement("div");
+        extLine.className = "collection-ext-line";
+        extLine.textContent = formatExtensions(collection.extensions);
+        pathRow.appendChild(pathLine);
+        pathRow.appendChild(extLine);
+        item.appendChild(nameLine);
+        item.appendChild(pathRow);
+        const expanded = expandedVirtuals.has(collection.id);
+        if (collection.id === currentVirtualId) {
+          item.classList.add("active");
+        }
+        item.addEventListener("click", () => {
+          currentVirtualId = collection.id;
+          currentCollectionId = null;
+          currentGameId = null;
+          if (expandedVirtuals.has(collection.id)) {
+            expandedVirtuals.delete(collection.id);
+          } else {
+            expandedVirtuals.add(collection.id);
+          }
+          if (searchQuery) {
+            searchQuery = "";
+            if (searchInput) {
+              searchInput.value = "";
+            }
+          }
+          if (searchCollectionId) {
+            searchCollectionId = "";
+            if (searchCollection) {
+              searchCollection.value = "";
+            }
+          }
+          renderCollections();
+          renderGames();
+          renderFields();
+          renderMedia();
+        });
+        collectionList.appendChild(item);
+        if (expanded && Array.isArray(collection.children)) {
+          collection.children
+            .filter((child) => matchesCollectionSearch(child, query) || child.id === currentCollectionId)
+            .forEach((child) => {
+              const childItem = document.createElement("li");
+              childItem.className = "list-item list-item-multiline child-collection";
+              const nameLineChild = document.createElement("div");
+              nameLineChild.className = "collection-name-line";
+              const childCounts = getCollectionCounts(child);
+              const countBadgeChild = document.createElement("span");
+              countBadgeChild.className = "collection-count";
+              countBadgeChild.textContent = `${childCounts.available}/${childCounts.total}`;
+              const childNameText = document.createElement("span");
+              childNameText.textContent = child.name || child.display_name || "";
+              nameLineChild.appendChild(childNameText);
+              nameLineChild.appendChild(countBadgeChild);
+              const pathRowChild = document.createElement("div");
+              pathRowChild.className = "collection-path-row";
+              const pathLineChild = document.createElement("div");
+              pathLineChild.className = "collection-path-line";
+              const coreTextChild = formatCore(child);
+              const dirTextChild = child.relative_path || child.dir_name || "";
+              pathLineChild.textContent = coreTextChild ? `${dirTextChild} (${coreTextChild})` : dirTextChild;
+              const extLineChild = document.createElement("div");
+              extLineChild.className = "collection-ext-line";
+              extLineChild.textContent = formatExtensions(child.extensions);
+              pathRowChild.appendChild(pathLineChild);
+              pathRowChild.appendChild(extLineChild);
+              childItem.appendChild(nameLineChild);
+              childItem.appendChild(pathRowChild);
+              if (child.id === currentCollectionId) {
+                childItem.classList.add("active");
+              }
+              childItem.addEventListener("click", (event) => {
+                event.stopPropagation();
+                currentCollectionId = child.id;
+                currentVirtualId = collection.id;
+                currentGameId = null;
+                renderCollections();
+                renderGames();
+                renderFields();
+                renderMedia();
+              });
+              collectionList.appendChild(childItem);
+            });
+        }
+      } else {
+        const item = document.createElement("li");
+        item.className = "list-item list-item-multiline";
+        const nameLine = document.createElement("div");
+        nameLine.className = "collection-name-line";
+        const counts = getCollectionCounts(collection);
+        const countBadge = document.createElement("span");
+        countBadge.className = "collection-count";
+        countBadge.textContent = `${counts.available}/${counts.total}`;
+        const nameText = document.createElement("span");
+        nameText.textContent = collection.name || collection.display_name || "";
+        nameLine.appendChild(nameText);
+        nameLine.appendChild(countBadge);
+        const pathRow = document.createElement("div");
+        pathRow.className = "collection-path-row";
+        const pathLine = document.createElement("div");
+        pathLine.className = "collection-path-line";
+        const coreText = formatCore(collection);
+        const dirText = collection.relative_path || collection.dir_name || "";
+        pathLine.textContent = coreText ? `${dirText} (${coreText})` : dirText;
+        const extLine = document.createElement("div");
+        extLine.className = "collection-ext-line";
+        extLine.textContent = formatExtensions(collection.extensions);
+        pathRow.appendChild(pathLine);
+        pathRow.appendChild(extLine);
+        item.appendChild(nameLine);
+        item.appendChild(pathRow);
+        if (collection.id === currentCollectionId && !currentVirtualId) {
+          item.classList.add("active");
+        }
+        item.addEventListener("click", () => {
+          currentCollectionId = collection.id;
+          currentVirtualId = null;
+          currentGameId = null;
+          if (searchQuery) {
+            searchQuery = "";
+            if (searchInput) {
+              searchInput.value = "";
+            }
+          }
+          if (searchCollectionId) {
+            searchCollectionId = "";
+            if (searchCollection) {
+              searchCollection.value = "";
+            }
+          }
+          renderCollections();
+          renderGames();
+          renderFields();
+          renderMedia();
+        });
+        collectionList.appendChild(item);
       }
-      item.addEventListener("click", () => {
-        currentCollectionId = collection.id;
-        currentGameId = null;
-        if (searchQuery) {
-          searchQuery = "";
-          if (searchInput) {
-            searchInput.value = "";
-          }
-        }
-        if (searchCollectionId) {
-          searchCollectionId = "";
-          if (searchCollection) {
-            searchCollection.value = "";
-          }
-        }
-        renderCollections();
-        renderGames();
-        renderFields();
-        renderMedia();
-      });
-      collectionList.appendChild(item);
     });
     renderGames();
   }
@@ -513,6 +709,60 @@
 
   function renderCollectionGames() {
     const coll = getCurrentCollection();
+    const virtualGroup = currentVirtualId ? buildVirtualCollections().find((v) => v.id === currentVirtualId) : null;
+    if (!coll && virtualGroup) {
+      const merged = [];
+      virtualGroup.children.forEach((child) => {
+        (child.games || []).forEach((game) => {
+          if (!shouldDisplayGame(game)) {
+            return;
+          }
+          merged.push({ game, collection: child });
+        });
+      });
+      const visibleGames = merged;
+      if (!visibleGames.length) {
+        gameEmpty.textContent = showMissingGames ? "该合集暂无游戏" : "该合集暂无可用游戏";
+        gameEmpty.style.display = "block";
+        currentGameId = null;
+        renderFields();
+        renderMedia();
+        updateActionButtons();
+        return;
+      }
+      gameEmpty.style.display = "none";
+      if (!currentGameId || !visibleGames.some((g) => g.game.id === currentGameId)) {
+        currentGameId = visibleGames[0].game.id;
+      }
+      visibleGames
+        .sort((a, b) => {
+          const keyA = gameSortKey(a.game);
+          const keyB = gameSortKey(b.game);
+          if (keyA === keyB) {
+            return (a.game.display_name || a.game.title || "").localeCompare(
+              b.game.display_name || b.game.title || "",
+            );
+          }
+          return keyA.localeCompare(keyB);
+        })
+        .forEach(({ game, collection }) => {
+          const item = createGameListItem(game, collection, () => {
+            currentGameId = game.id;
+            // 保持虚拟目录选中，不切换到单个真实目录
+            renderGames();
+            renderFields();
+            renderMedia();
+          });
+          if (game.id === currentGameId) {
+            item.classList.add("active");
+          }
+          gameList.appendChild(item);
+        });
+      renderFields();
+      renderMedia();
+      updateActionButtons();
+      return;
+    }
     if (!coll) {
       gameEmpty.textContent = "请选择左侧的合集";
       gameEmpty.style.display = "block";
@@ -614,6 +864,48 @@
     }
     const text = game.display_name || game.title || "";
     return text.replace(/\s*\(.+\)\s*$/, "");
+  }
+
+  function gameSortKey(game) {
+    if (!game) {
+      return "";
+    }
+    if (game.sort_key) {
+      return String(game.sort_key).toLowerCase();
+    }
+    if (Array.isArray(game.fields)) {
+      const sortField = game.fields.find(
+        (f) => f && typeof f.key === "string" && f.key.toLowerCase() === "sort-by" && f.values && f.values.length,
+      );
+      if (sortField) {
+        return String(sortField.values[0] || "").toLowerCase();
+      }
+    }
+    return String(game.display_name || game.title || "").toLowerCase();
+  }
+
+  function ensureVirtualSelectionByName(name, options = {}) {
+    const key = (name || "").trim().toLowerCase();
+    if (!key) {
+      return;
+    }
+    const vid = `virtual-${key}`;
+    const wasExpanded = expandedVirtuals.has(vid);
+    currentVirtualId = vid;
+    currentCollectionId = null;
+    if (options.expand === true) {
+      expandedVirtuals.add(vid);
+      return;
+    }
+    if (options.expand === false) {
+      expandedVirtuals.delete(vid);
+      return;
+    }
+    if (wasExpanded) {
+      expandedVirtuals.add(vid);
+    } else {
+      expandedVirtuals.delete(vid);
+    }
   }
 
   function setRowFeedback(row, message, isError) {
@@ -1719,6 +2011,8 @@
     const isMissing = context ? isMissingGame(context.game) : false;
     const disableEdit = !hasSelection || isMissing;
     const disableDelete = !hasSelection || isMissing;
+    const disableAdd = !getCurrentCollection();
+    const disableCollectionEdit = !getCurrentCollection();
     const supportedRomInfo = Boolean(
       context && context.collection && isSupportedCore(context.collection.core),
     );
@@ -1728,10 +2022,20 @@
       editButton.classList.toggle("disabled", disableEdit);
       editButton.title = isMissing ? "缺失 ROM 的游戏仅支持查看" : "";
     }
+    if (addGameButton) {
+      addGameButton.disabled = disableAdd;
+      addGameButton.classList.toggle("disabled", disableAdd);
+      addGameButton.title = disableAdd ? "虚拟目录下无法直接新增游戏" : "";
+    }
     if (deleteButton) {
       deleteButton.disabled = disableDelete;
       deleteButton.classList.toggle("disabled", disableDelete);
       deleteButton.title = isMissing ? "缺失 ROM 的游戏仅支持查看" : "";
+    }
+    if (editCollectionButton) {
+      editCollectionButton.disabled = disableCollectionEdit;
+      editCollectionButton.classList.toggle("disabled", disableCollectionEdit);
+      editCollectionButton.title = disableCollectionEdit ? "虚拟目录不可编辑合集" : "";
     }
     if (romInfoButton) {
       romInfoButton.disabled = disableRomInfo;
@@ -1871,6 +2175,7 @@
       setEditStatus("存在重复的 ROM 文件，请重新上传", true);
       return;
     }
+    const wasPureVirtual = currentVirtualId !== null && currentCollectionId === null;
     const context = editContext || getCurrentSelectionContext();
     if (!context) {
       setEditStatus("请选择需要编辑的游戏", true);
@@ -1883,6 +2188,7 @@
       return;
     }
     setEditStatus("保存中...");
+    const virtualSelectionName = wasPureVirtual ? (context.collection?.name || "") : "";
     try {
       const endpoint = context.isNew ? "/api/games/create" : "/api/games/update";
       const body = {
@@ -1916,8 +2222,11 @@
       editContext = null;
       closeEditModal();
       applyCollectionUpdate(data.collection);
-      if (data.collection && data.collection.id) {
+      if (wasPureVirtual) {
+        ensureVirtualSelectionByName(virtualSelectionName);
+      } else if (data.collection && data.collection.id) {
         currentCollectionId = data.collection.id;
+        currentVirtualId = null;
       }
       if (data.game && data.game.id) {
         currentGameId = data.game.id;
@@ -2181,15 +2490,22 @@
         closeEditModal();
         closeDeleteModal();
         applyCollectionUpdate(data.collection);
-        const updatedCollection =
-          data.collection && data.collection.id
-            ? collections.find((c) => c.id === data.collection.id)
-            : null;
-        if (updatedCollection && updatedCollection.games.length) {
-          currentCollectionId = updatedCollection.id;
-          currentGameId = updatedCollection.games[0].id;
-        } else {
+        const wasPureVirtual = currentVirtualId !== null && currentCollectionId === null;
+        if (wasPureVirtual) {
+          ensureVirtualSelectionByName(context.collection?.name || "");
           currentGameId = null;
+        } else {
+          const updatedCollection =
+            data.collection && data.collection.id
+              ? collections.find((c) => c.id === data.collection.id)
+              : null;
+          if (updatedCollection && updatedCollection.games.length) {
+            currentCollectionId = updatedCollection.id;
+            currentVirtualId = null;
+            currentGameId = updatedCollection.games[0].id;
+          } else {
+            currentGameId = null;
+          }
         }
         renderCollections();
         renderGames();

@@ -51,6 +51,7 @@ type WebCommand struct {
 	romMu           sync.RWMutex
 	romStatusByGame map[string]*romStatusSummary
 	romStatusByPath map[string]*romStatusSummary
+	virtualSortMax  map[string]int
 	defsFBNeo       map[string]romDefInfo
 	defsMame        map[string]romDefInfo
 }
@@ -176,20 +177,20 @@ type deleteGameResponse struct {
 }
 
 type romInfoResponse struct {
-	Status      string            `json:"status"`
-	Emoji       string            `json:"emoji"`
-	RomPath     string            `json:"rom_path"`
-	RelRomPath  string            `json:"rel_rom_path"`
-	Core        string            `json:"core"`
-	SubRomCount int               `json:"subrom_count"`
-	DatSubCount int               `json:"dat_subrom_count"`
-	Parents     []parentPayload   `json:"parents,omitempty"`
-	SubRomFiles []*subRomFileInfo `json:"subrom_files,omitempty"`
-	DatSubRoms  []*subRomPayload  `json:"dat_subroms,omitempty"`
-	RomFiles    []string          `json:"rom_files,omitempty"`
-	RomFilesInfo []*romFileInfo   `json:"rom_files_info,omitempty"`
-	SelectedRom string            `json:"selected_rom,omitempty"`
-	Message     string            `json:"message,omitempty"`
+	Status       string            `json:"status"`
+	Emoji        string            `json:"emoji"`
+	RomPath      string            `json:"rom_path"`
+	RelRomPath   string            `json:"rel_rom_path"`
+	Core         string            `json:"core"`
+	SubRomCount  int               `json:"subrom_count"`
+	DatSubCount  int               `json:"dat_subrom_count"`
+	Parents      []parentPayload   `json:"parents,omitempty"`
+	SubRomFiles  []*subRomFileInfo `json:"subrom_files,omitempty"`
+	DatSubRoms   []*subRomPayload  `json:"dat_subroms,omitempty"`
+	RomFiles     []string          `json:"rom_files,omitempty"`
+	RomFilesInfo []*romFileInfo    `json:"rom_files_info,omitempty"`
+	SelectedRom  string            `json:"selected_rom,omitempty"`
+	Message      string            `json:"message,omitempty"`
 }
 
 type parentPayload struct {
@@ -293,6 +294,7 @@ func (c *WebCommand) Run(ctx context.Context) error {
 	if err := c.applyRomChecks(ctx, collections); err != nil {
 		return err
 	}
+	c.computeVirtualSortMax(collections)
 	c.setCollections(collections)
 	logger.Info("metadata loaded",
 		zap.Int("collection_count", len(collections)))
@@ -741,12 +743,48 @@ func (c *WebCommand) setCollections(cols []*collectionPayload) {
 	c.collections = cols
 }
 
+func (c *WebCommand) computeVirtualSortMax(cols []*collectionPayload) {
+	maxMap := make(map[string]int)
+	for _, coll := range cols {
+		if coll == nil {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(coll.Name))
+		if key == "" {
+			continue
+		}
+		for _, game := range coll.Games {
+			if game == nil {
+				continue
+			}
+			if val, ok := parseSortByToInt(game.SortKey); ok && val > maxMap[key] {
+				maxMap[key] = val
+				continue
+			}
+			for _, field := range game.Fields {
+				if field == nil {
+					continue
+				}
+				if strings.EqualFold(strings.TrimSpace(field.Key), "sort-by") && len(field.Values) > 0 {
+					if val, ok := parseSortByToInt(field.Values[0]); ok && val > maxMap[key] {
+						maxMap[key] = val
+					}
+				}
+			}
+		}
+	}
+	c.dataMu.Lock()
+	c.virtualSortMax = maxMap
+	c.dataMu.Unlock()
+}
+
 func (c *WebCommand) reloadCollections(ctx context.Context) error {
 	cols, err := loadCollections(ctx, c.root, c.assets)
 	if err != nil {
 		return err
 	}
 	c.applyStoredRomStatus(cols)
+	c.computeVirtualSortMax(cols)
 	c.setCollections(cols)
 	return nil
 }
@@ -1258,7 +1296,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				DisplayName:  fmt.Sprintf("%s(%s)", name, dirName),
 				MetadataPath: metadataPath,
 				RelativePath: relDir,
-				SortKey:      strings.TrimSpace(typed.SortBy),
+				SortKey:      formatSortByValue(typed.SortBy),
 				Extensions:   parseCollectionExtensions(blk),
 				Core:         deriveCore(typed.Launch),
 				Fields:       convertBlockFields(blk),
@@ -1313,7 +1351,7 @@ func buildCollections(doc *metadata.Document, metadataPath, root string, store *
 				RomPath:     romPath,
 				RelRomPath:  relRomPath,
 				DisplayName: display,
-				SortKey:     strings.TrimSpace(typed.SortBy),
+				SortKey:     formatSortByValue(typed.SortBy),
 				RomMissing:  romMissing,
 				HasBoxArt:   hasBoxArt,
 				HasVideo:    hasVideo,
@@ -1561,7 +1599,7 @@ func normalizeSortKey(game *gamePayload) string {
 			continue
 		}
 		if field.Key == "sort-by" && len(field.Values) > 0 {
-			return strings.ToLower(field.Values[0])
+			return strings.ToLower(formatSortByValue(field.Values[0]))
 		}
 	}
 	return strings.ToLower(game.DisplayName)
@@ -1612,6 +1650,8 @@ func (c *WebCommand) createGame(metadataPath string, xIndexID int, fields []*fie
 	blk := &metadata.Block{Kind: metadata.KindGame}
 	doc.Blocks = append(doc.Blocks, blk)
 	setBlockXIndexID(blk, xIndexID)
+	// inject sort-by default for virtual group if missing
+	fields = c.ensureSortByDefault(metadataPath, fields)
 	fields, err = c.materializeStagedFields(metadataPath, doc, blk, fields)
 	if err != nil {
 		return 0, err
@@ -1976,6 +2016,9 @@ func (c *WebCommand) finalizeStagedFile(metadataPath string, doc *metadata.Docum
 }
 
 func normalizeFieldValueForDisplay(key, value string) string {
+	if isSortByKey(key) {
+		return formatSortByValue(value)
+	}
 	if isMultilineTextKey(key) {
 		return decodeEscapedNewlines(value)
 	}
@@ -1986,6 +2029,11 @@ func normalizeFieldValuesForKey(key string, values []string) []string {
 	normalized := normalizeFieldValues(values)
 	if len(normalized) == 0 {
 		return nil
+	}
+	if isSortByKey(key) {
+		for idx, v := range normalized {
+			normalized[idx] = formatSortByValue(v)
+		}
 	}
 	if isMultilineTextKey(key) {
 		joined := strings.Join(normalized, "\n")
@@ -2034,6 +2082,90 @@ func isMultilineTextKey(key string) bool {
 	default:
 		return false
 	}
+}
+
+func isSortByKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), "sort-by")
+}
+
+func formatSortByValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return trimmed
+	}
+	for _, r := range trimmed {
+		if r < '0' || r > '9' {
+			return trimmed
+		}
+	}
+	num, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return trimmed
+	}
+	return fmt.Sprintf("%06d", num)
+}
+
+func parseSortByToInt(value string) (int, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	for _, r := range trimmed {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+	}
+	num, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0, false
+	}
+	return num, true
+}
+
+func (c *WebCommand) ensureSortByDefault(metadataPath string, fields []*fieldPayload) []*fieldPayload {
+	hasSort := false
+	for _, f := range fields {
+		if f == nil {
+			continue
+		}
+		if isSortByKey(f.Key) && len(f.Values) > 0 && strings.TrimSpace(f.Values[0]) != "" {
+			hasSort = true
+			break
+		}
+	}
+	if hasSort {
+		return fields
+	}
+	coll := c.findCollectionByPath(filepath.ToSlash(metadataPath))
+	if coll == nil {
+		return fields
+	}
+	key := strings.ToLower(strings.TrimSpace(coll.Name))
+	if key == "" {
+		return fields
+	}
+	value := c.nextSortByForKey(key)
+	if value == "" {
+		return fields
+	}
+	fields = append(fields, &fieldPayload{Key: "sort-by", Values: []string{value}})
+	return fields
+}
+
+func (c *WebCommand) nextSortByForKey(key string) string {
+	key = strings.TrimSpace(strings.ToLower(key))
+	if key == "" {
+		return ""
+	}
+	c.dataMu.Lock()
+	if c.virtualSortMax == nil {
+		c.virtualSortMax = make(map[string]int)
+	}
+	defer c.dataMu.Unlock()
+	current := c.virtualSortMax[key]
+	next := current + 1
+	c.virtualSortMax[key] = next
+	return fmt.Sprintf("%06d", next)
 }
 
 func moveFileToMedia(metadataPath string, block *metadata.Block, pendingFile string, sourcePath, stagedName, assetKey string) (string, error) {
@@ -2274,13 +2406,13 @@ func pickRomPath(metadataPath string, candidates []string, selected string) stri
 
 func buildRomInfoResponse(coll *collectionPayload, game *gamePayload, romPath string, candidates []string, summary *romStatusSummary, archiveEntries []archiveEntry, root string) *romInfoResponse {
 	resp := &romInfoResponse{
-		Status:      string(romStatusNotTested),
-		Emoji:       "🔘",
-		Core:        coll.Core,
-		RomFiles:    make([]string, 0, len(candidates)),
+		Status:       string(romStatusNotTested),
+		Emoji:        "🔘",
+		Core:         coll.Core,
+		RomFiles:     make([]string, 0, len(candidates)),
 		RomFilesInfo: make([]*romFileInfo, 0, len(candidates)),
-		SelectedRom: filepath.ToSlash(romPath),
-		RomPath:     filepath.ToSlash(romPath),
+		SelectedRom:  filepath.ToSlash(romPath),
+		RomPath:      filepath.ToSlash(romPath),
 	}
 	for _, c := range candidates {
 		normalized := filepath.ToSlash(c)
