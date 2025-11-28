@@ -872,6 +872,17 @@
     return String(game.display_name || game.title || "").toLowerCase();
   }
 
+  function ensureVirtualSelectionByName(name) {
+    const key = (name || "").trim().toLowerCase();
+    if (!key) {
+      return;
+    }
+    const vid = `virtual-${key}`;
+    currentVirtualId = vid;
+    currentCollectionId = null;
+    expandedVirtuals.add(vid);
+  }
+
   function setRowFeedback(row, message, isError) {
     const state = getRowState(row);
     if (!state || !state.feedbackEl) {
@@ -2139,6 +2150,7 @@
       setEditStatus("存在重复的 ROM 文件，请重新上传", true);
       return;
     }
+    const wasVirtual = currentVirtualId !== null;
     const context = editContext || getCurrentSelectionContext();
     if (!context) {
       setEditStatus("请选择需要编辑的游戏", true);
@@ -2151,6 +2163,7 @@
       return;
     }
     setEditStatus("保存中...");
+    const virtualSelectionName = wasVirtual ? (context.collection?.name || "") : "";
     try {
       const endpoint = context.isNew ? "/api/games/create" : "/api/games/update";
       const body = {
@@ -2184,7 +2197,9 @@
       editContext = null;
       closeEditModal();
       applyCollectionUpdate(data.collection);
-      if (data.collection && data.collection.id) {
+      if (wasVirtual) {
+        ensureVirtualSelectionByName(virtualSelectionName);
+      } else if (data.collection && data.collection.id) {
         currentCollectionId = data.collection.id;
       }
       if (data.game && data.game.id) {
@@ -2449,15 +2464,20 @@
         closeEditModal();
         closeDeleteModal();
         applyCollectionUpdate(data.collection);
-        const updatedCollection =
-          data.collection && data.collection.id
-            ? collections.find((c) => c.id === data.collection.id)
-            : null;
-        if (updatedCollection && updatedCollection.games.length) {
-          currentCollectionId = updatedCollection.id;
-          currentGameId = updatedCollection.games[0].id;
-        } else {
+        if (currentVirtualId !== null) {
+          ensureVirtualSelectionByName(context.collection?.name || "");
           currentGameId = null;
+        } else {
+          const updatedCollection =
+            data.collection && data.collection.id
+              ? collections.find((c) => c.id === data.collection.id)
+              : null;
+          if (updatedCollection && updatedCollection.games.length) {
+            currentCollectionId = updatedCollection.id;
+            currentGameId = updatedCollection.games[0].id;
+          } else {
+            currentGameId = null;
+          }
         }
         renderCollections();
         renderGames();
