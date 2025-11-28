@@ -109,6 +109,7 @@
   };
   const REQUIRED_GAME_KEYS = new Set(["game", "file", "assets.boxfront"]);
   const COLLAPSIBLE_FIELD_KEYS = new Set([
+    "sort-by",
     "sort_name",
     "sort_title",
     "tag",
