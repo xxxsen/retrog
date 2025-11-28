@@ -347,6 +347,17 @@
     const virtuals = buildVirtualCollections();
     collectionList.innerHTML = "";
     const query = (collectionSearchQuery || "").trim().toLowerCase();
+    // 若当前选中的真实目录属于某个虚拟目录，保持其父目录展开
+    if (currentCollectionId) {
+      virtuals.forEach((v) => {
+        if (Array.isArray(v.children) && v.children.some((c) => c && c.id === currentCollectionId)) {
+          expandedVirtuals.add(v.id);
+          if (!currentVirtualId) {
+            currentVirtualId = v.id;
+          }
+        }
+      });
+    }
     const multiNames = new Set(virtuals.map((v) => (v.name || "").toLowerCase()));
     const singletonCollections = collections.filter(
       (c) => !multiNames.has((c.name || "").toLowerCase()),
@@ -378,7 +389,7 @@
       renderGames();
       return;
     }
-    const hasCurrentReal = currentCollectionId && visibleCollections.some((c) => c.id === currentCollectionId);
+    const hasCurrentReal = Boolean(currentCollectionId);
     const hasCurrentVirtual = currentVirtualId && visibleCollections.some((c) => c.id === currentVirtualId);
     if (!hasCurrentReal && !hasCurrentVirtual) {
       const first = visibleCollections[0];
@@ -450,7 +461,7 @@
         collectionList.appendChild(item);
         if (expanded && Array.isArray(collection.children)) {
           collection.children
-            .filter((child) => matchesCollectionSearch(child, query))
+            .filter((child) => matchesCollectionSearch(child, query) || child.id === currentCollectionId)
             .forEach((child) => {
               const childItem = document.createElement("li");
               childItem.className = "list-item list-item-multiline child-collection";
@@ -872,15 +883,28 @@
     return String(game.display_name || game.title || "").toLowerCase();
   }
 
-  function ensureVirtualSelectionByName(name) {
+  function ensureVirtualSelectionByName(name, options = {}) {
     const key = (name || "").trim().toLowerCase();
     if (!key) {
       return;
     }
     const vid = `virtual-${key}`;
+    const wasExpanded = expandedVirtuals.has(vid);
     currentVirtualId = vid;
     currentCollectionId = null;
-    expandedVirtuals.add(vid);
+    if (options.expand === true) {
+      expandedVirtuals.add(vid);
+      return;
+    }
+    if (options.expand === false) {
+      expandedVirtuals.delete(vid);
+      return;
+    }
+    if (wasExpanded) {
+      expandedVirtuals.add(vid);
+    } else {
+      expandedVirtuals.delete(vid);
+    }
   }
 
   function setRowFeedback(row, message, isError) {
@@ -2150,7 +2174,7 @@
       setEditStatus("存在重复的 ROM 文件，请重新上传", true);
       return;
     }
-    const wasVirtual = currentVirtualId !== null;
+    const wasPureVirtual = currentVirtualId !== null && currentCollectionId === null;
     const context = editContext || getCurrentSelectionContext();
     if (!context) {
       setEditStatus("请选择需要编辑的游戏", true);
@@ -2163,7 +2187,7 @@
       return;
     }
     setEditStatus("保存中...");
-    const virtualSelectionName = wasVirtual ? (context.collection?.name || "") : "";
+    const virtualSelectionName = wasPureVirtual ? (context.collection?.name || "") : "";
     try {
       const endpoint = context.isNew ? "/api/games/create" : "/api/games/update";
       const body = {
@@ -2197,10 +2221,11 @@
       editContext = null;
       closeEditModal();
       applyCollectionUpdate(data.collection);
-      if (wasVirtual) {
+      if (wasPureVirtual) {
         ensureVirtualSelectionByName(virtualSelectionName);
       } else if (data.collection && data.collection.id) {
         currentCollectionId = data.collection.id;
+        currentVirtualId = null;
       }
       if (data.game && data.game.id) {
         currentGameId = data.game.id;
@@ -2464,7 +2489,8 @@
         closeEditModal();
         closeDeleteModal();
         applyCollectionUpdate(data.collection);
-        if (currentVirtualId !== null) {
+        const wasPureVirtual = currentVirtualId !== null && currentCollectionId === null;
+        if (wasPureVirtual) {
           ensureVirtualSelectionByName(context.collection?.name || "");
           currentGameId = null;
         } else {
@@ -2474,6 +2500,7 @@
               : null;
           if (updatedCollection && updatedCollection.games.length) {
             currentCollectionId = updatedCollection.id;
+            currentVirtualId = null;
             currentGameId = updatedCollection.games[0].id;
           } else {
             currentGameId = null;
