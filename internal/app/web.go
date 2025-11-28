@@ -1035,10 +1035,13 @@ func summarizeRomResult(item *sdk.RomFileTestResult) *romStatusSummary {
 		return &romStatusSummary{Status: romStatusGreen, Emoji: "🟢", Result: item}
 	case red == 0 && len(item.YellowSubRomResultList) == 0:
 		return &romStatusSummary{Status: romStatusGreen, Emoji: "🟢", Result: item}
-	case red*2 < total:
-		return &romStatusSummary{Status: romStatusYellow, Emoji: "🟡", Result: item}
 	default:
-		return &romStatusSummary{Status: romStatusRed, Emoji: "🔴", Result: item}
+		redDominant := red*2 >= total
+		redCountGate := red >= 3
+		if redDominant || redCountGate {
+			return &romStatusSummary{Status: romStatusRed, Emoji: "🔴", Result: item}
+		}
+		return &romStatusSummary{Status: romStatusYellow, Emoji: "🟡", Result: item}
 	}
 }
 
