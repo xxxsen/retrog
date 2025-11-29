@@ -98,11 +98,7 @@ func (t *tester) TestDir(ctx Context, romdir string, biosdir string, exts []stri
 	// include bios directory files
 	if biosdir != "" {
 		biosPaths, _ := collectPaths(biosdir, allowed)
-		for k, v := range indexPaths(biosPaths) {
-			if _, ok := nameToPath[k]; !ok {
-				nameToPath[k] = v
-			}
-		}
+		nameToPath = mergePathIndexWithBiosPreference(nameToPath, biosPaths, biosdir)
 	}
 	var results []*RomFileTestResult
 	for _, p := range paths {
@@ -223,10 +219,66 @@ func indexPaths(paths []string) map[string]string {
 	return out
 }
 
+func mergePathIndexWithBiosPreference(base map[string]string, biosPaths []string, biosRoot string) map[string]string {
+	if base == nil {
+		base = make(map[string]string)
+	}
+	for _, p := range biosPaths {
+		name := strings.ToLower(deriveGameName(p))
+		if name == "" {
+			continue
+		}
+		current, exists := base[name]
+		if !exists {
+			base[name] = p
+			continue
+		}
+		// Prefer the one that lives in biosRoot. If both are in biosRoot, choose the richer archive.
+		currentIsBios := isPathInDir(current, biosRoot)
+		newIsBios := isPathInDir(p, biosRoot)
+		switch {
+		case newIsBios && !currentIsBios:
+			base[name] = p
+		case newIsBios && currentIsBios:
+			best, err := chooseRicherArchive(current, p)
+			if err == nil {
+				base[name] = best
+			}
+		}
+	}
+	return base
+}
+
+func chooseRicherArchive(pathA, pathB string) (string, error) {
+	countA, errA := countArchiveEntries(pathA)
+	countB, errB := countArchiveEntries(pathB)
+	switch {
+	case errA != nil && errB != nil:
+		return pathA, errA
+	case errA != nil:
+		return pathB, nil
+	case errB != nil:
+		return pathA, nil
+	case countB > countA:
+		return pathB, nil
+	default:
+		return pathA, nil
+	}
+}
+
 func deriveGameName(path string) string {
 	base := filepath.Base(path)
 	ext := filepath.Ext(base)
 	return strings.TrimSuffix(base, ext)
+}
+
+func countArchiveEntries(path string) (int, error) {
+	files, closer, err := openArchive(path)
+	if err != nil {
+		return 0, err
+	}
+	defer closer.Close()
+	return len(files), nil
 }
 
 func openArchive(path string) ([]archiveFile, io.Closer, error) {
